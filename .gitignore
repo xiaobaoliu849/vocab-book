@@ -12,7 +12,9 @@ ENV/
 build/
 dist/
 *.exe
+!MyVocabBook.exe  # 保留主 EXE 文件
 *.spec
+!MyVocabBook*.spec  # 保留 spec 文件
 
 # IDE
 .vscode/
