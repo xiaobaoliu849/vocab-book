@@ -21,7 +21,7 @@ class UpdateService:
     # }
 
     # Using a dummy URL for now as per plan, user needs to configure this.
-    VERSION_INFO_URL = "https://raw.githubusercontent.com/your_user/your_repo/main/version.json"
+    VERSION_INFO_URL = "https://raw.githubusercontent.com/xiaobaoliu849/vocab-book/main/version.json"
 
     @staticmethod
     def check_for_updates(callback):

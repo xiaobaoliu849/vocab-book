@@ -1,0 +1,5 @@
+{
+  "version": "3.3",
+  "download_url": "https://github.com/xiaobaoliu849/vocab-book/releases",
+  "changelog": "## v3.3 Bug Fixes\n- 修复删除单词功能\n- 修复线程竞态问题\n- 修复数据库连接泄漏\n- 增强异常处理保护"
+}
