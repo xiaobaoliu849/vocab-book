@@ -1,0 +1,9 @@
+customtkinter
+requests
+keyboard
+beautifulsoup4
+pygame
+pyinstaller
+Pillow
+pystray
+win10toast-click
