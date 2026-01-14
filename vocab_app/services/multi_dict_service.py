@@ -115,11 +115,13 @@ class MultiDictService:
     def search_bing(word):
         """Bing 词典查询"""
         try:
-            url = f"https://cn.bing.com/dict/search?q={word}"
+            # 使用 mkt=zh-cn 强制中文版，setlang 备用
+            url = f"https://cn.bing.com/dict/search?q={word}&mkt=zh-cn&setlang=zh-hans"
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
             }
-            resp = requests.get(url, headers=headers, timeout=8) # 缩短超时
+            resp = requests.get(url, headers=headers, timeout=8)
 
             if resp.status_code != 200:
                 return None
@@ -135,14 +137,14 @@ class MultiDictService:
                 phonetic = pron_us.get_text(strip=True)
 
             meaning = ""
-            ul = soup.find('ul', class_='qdef')
-            if ul:
+            # Bing 结构变化：div.qdef 里面直接包含 li（无 class）
+            qdef = soup.find('div', class_='qdef')
+            if qdef:
                 meanings = []
-                for li in ul.find_all('li'):
-                    pos = li.find('span', class_='pos')
-                    defs = li.find('span', class_='def')
-                    if pos and defs:
-                        meanings.append(f"{pos.get_text(strip=True)} {defs.get_text(strip=True)}")
+                for li in qdef.find_all('li'):
+                    text = li.get_text(strip=True)
+                    if text and len(text) > 1:
+                        meanings.append(text)
                 meaning = "\n".join(meanings)
 
             example = ""

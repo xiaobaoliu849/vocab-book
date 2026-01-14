@@ -214,6 +214,7 @@ class SettingsView(BaseView):
         # 词典配置
         dict_configs = [
             ("youdao", "📗 有道词典", "中文释义准确，词根词缀丰富", True),
+            ("cambridge", "🏰 Cambridge Dictionary", "权威英英释义，高质量例句", True),
             ("bing", "🔷 Bing 词典", "词形变化、常用搭配", True),
             ("freedict", "📖 Free Dictionary", "英英释义，深度理解词义", True),
         ]
@@ -283,6 +284,7 @@ class SettingsView(BaseView):
         if "dict_sources" not in self.controller.config:
             self.controller.config["dict_sources"] = {
                 "youdao": True,
+                "cambridge": True,
                 "bing": True,
                 "freedict": True
             }
@@ -645,6 +647,7 @@ class SettingsView(BaseView):
         if hasattr(self, 'dict_switches'):
             dict_sources = self.controller.config.get("dict_sources", {
                 "youdao": True,
+                "cambridge": True,
                 "bing": True,
                 "freedict": True
             })

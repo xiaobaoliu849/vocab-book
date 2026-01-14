@@ -1,5 +1,9 @@
 import os
 import sys
+import signal
+
+# Prevent app from closing when sending Ctrl+C (SIGINT)
+signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 # 在任何其他导入之前设置 SDL 音频驱动 (修复 Windows 下 pygame 无声问题)
 if os.name == 'nt':

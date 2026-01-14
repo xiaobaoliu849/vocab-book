@@ -51,6 +51,7 @@ def get_default_config():
         # 多词典配置
         "dict_sources": {
             "youdao": True,    # 有道词典（默认开启）
+            "cambridge": True, # 剑桥词典（默认开启）
             "bing": True,      # Bing 词典（默认开启）
             "freedict": True,  # Free Dictionary API（默认开启）
         },
