@@ -35,3 +35,7 @@ Thumbs.db
 # Temp
 *.tmp
 *.log
+.claude/
+.gemini*/
+tmpclaude-*
+nul
