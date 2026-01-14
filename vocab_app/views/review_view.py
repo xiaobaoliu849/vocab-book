@@ -10,122 +10,137 @@ from ..config import FONT_NORMAL, FONT_BOLD, FONT_LARGE
 class ReviewView(BaseView):
     def setup_ui(self):
         self.configure(fg_color="transparent")
-
         self.create_context_menu()
 
-        self.review_method = "flashcard" # "flashcard" or "spelling"
-        self.is_cram_mode = False        # True or False
-
+        self.review_method = "flashcard" # "flashcard", "spelling", "sentence"
+        self.is_cram_mode = False
+        
+        # UI State
+        self.spelling_checked = False
         self.queue = []
         self.cur_word = None
         self.review_completed = 0
         self.review_total = 0
-        self._queue_lock = threading.Lock()  # 队列操作锁
-        self._event_bound = False  # 事件绑定状态标志
+        self._queue_lock = threading.Lock()
+        self._event_bound = False
 
-        # Top Bar
-        top_frame = ctk.CTkFrame(self, fg_color="transparent")
-        top_frame.pack(fill="x", padx=20, pady=(10, 0))
+        # --- Top Header: Mode Switcher ---
+        self.header_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.header_frame.pack(fill="x", side="top", padx=60, pady=(20, 0))
 
-        mode_frame = ctk.CTkFrame(top_frame, fg_color="transparent")
-        mode_frame.pack(side="left")
+        self.mode_frame = ctk.CTkFrame(self.header_frame, fg_color=("gray90", "#2b2b2b"), height=40, corner_radius=20)
+        self.mode_frame.pack(side="left", pady=2)
 
-        self.btn_method_flashcard = ctk.CTkButton(
-            mode_frame, text="📖 闪卡模式", width=100, height=32,
-            font=("Microsoft YaHei UI", 12, "bold"), fg_color="#3B8ED0",
-            command=lambda: self.set_review_method("flashcard")
-        )
-        self.btn_method_flashcard.pack(side="left", padx=(0, 5))
+        self.btn_method_flashcard = ctk.CTkButton(self.mode_frame, text="🎴 识记 (L1)", width=100, height=32, corner_radius=16, 
+                                                fg_color="#3B8ED0", font=("Microsoft YaHei UI", 12, "bold"),
+                                                command=lambda: self.set_review_method("flashcard"))
+        self.btn_method_flashcard.pack(side="left", padx=2, pady=2)
 
-        self.btn_method_spelling = ctk.CTkButton(
-            mode_frame, text="✍️ 拼写模式", width=100, height=32,
-            font=("Microsoft YaHei UI", 12, "bold"), fg_color="gray",
-            command=lambda: self.set_review_method("spelling")
-        )
-        self.btn_method_spelling.pack(side="left")
+        self.btn_method_spelling = ctk.CTkButton(self.mode_frame, text="⌨️ 拼写 (L2)", width=100, height=32, corner_radius=16, 
+                                               fg_color=("gray90", "#2b2b2b"), text_color=("gray20", "gray80"), font=("Microsoft YaHei UI", 12),
+                                               command=lambda: self.set_review_method("spelling"))
+        self.btn_method_spelling.pack(side="left", padx=2, pady=2)
 
-        self.btn_toggle_cram = ctk.CTkButton(
-            mode_frame, text="🚀 突击模式: 关", width=120, height=32,
-            font=("Microsoft YaHei UI", 12, "bold"), fg_color="gray",
-            command=self.toggle_cram_mode
-        )
-        self.btn_toggle_cram.pack(side="left", padx=(15, 0))
+        self.btn_method_sentence = ctk.CTkButton(self.mode_frame, text="✍️ 语境 (L3)", width=100, height=32, corner_radius=16, 
+                                               fg_color=("gray90", "#2b2b2b"), text_color=("gray20", "gray80"), font=("Microsoft YaHei UI", 12),
+                                               command=lambda: self.set_review_method("sentence"))
+        self.btn_method_sentence.pack(side="left", padx=2, pady=2)
 
-        progress_frame = ctk.CTkFrame(top_frame, fg_color="transparent")
-        progress_frame.pack(side="right")
+        self.btn_toggle_cram = ctk.CTkButton(self.header_frame, text="🚀 突击模式: 关", width=140, height=36, corner_radius=18,
+                                           fg_color="transparent", border_width=1, border_color="gray", 
+                                           text_color=("gray20", "gray80"), font=("Microsoft YaHei UI", 12),
+                                           command=self.toggle_cram_mode)
+        self.btn_toggle_cram.pack(side="right")
 
-        self.lbl_review_progress = ctk.CTkLabel(
-            progress_frame, text="待复习: 0 个", font=("Microsoft YaHei UI", 14), text_color="gray"
-        )
-        self.lbl_review_progress.pack(side="left", padx=(0, 10))
-
-        self.review_progress_bar = ctk.CTkProgressBar(progress_frame, width=200, height=8)
-        self.review_progress_bar.pack(side="left")
+        # Row 2: Progress (Moved inside card or kept top)
+        self.progress_container = ctk.CTkFrame(self, fg_color="transparent")
+        self.progress_container.pack(fill="x", side="top", padx=80, pady=(10, 5)) 
+        
+        self.review_progress_bar = ctk.CTkProgressBar(self.progress_container, height=4, fg_color=("gray85", "gray30"), progress_color="#3B8ED0")
+        self.review_progress_bar.pack(fill="x", side="top", pady=(0, 2))
         self.review_progress_bar.set(0)
 
-        # Flashcard UI
-        self.card = ctk.CTkFrame(self, height=400, fg_color=("gray90", "gray20"))
-        # Don't pack initially, handled by start_review or switch_mode
-        self.card.pack_propagate(True)
+        self.lbl_review_progress = ctk.CTkLabel(self.progress_container, text="待复习: 0 个", font=("Microsoft YaHei UI", 11), text_color="gray")
+        self.lbl_review_progress.pack(side="right")
 
-        self.lbl_rw = ctk.CTkLabel(self.card, text="准备开始", font=FONT_LARGE)
-        self.lbl_rw.pack(pady=(40, 10))
+        # Row 3: Main Display Card (Responsive)
+        self.card = ctk.CTkFrame(self, fg_color=("white", "#2b2b2b"), corner_radius=28, border_width=1, border_color=("gray90", "gray30"))
+        self.card.pack(side="top", padx=60, pady=(10, 10), fill="both", expand=True) 
+        # self.card.pack_propagate(False) # Removed to allow internal elements to push/pull
 
-        self.btn_rp = ctk.CTkButton(self.card, text="🔊", width=40, fg_color="green", command=lambda: None)
+        self.lbl_rw = ctk.CTkTextbox(
+            self.card, 
+            height=80,
+            font=("Microsoft YaHei UI", 36, "bold"),
+            fg_color="transparent",
+            text_color=("#1a1a1a", "#ffffff"),
+            border_width=0,
+            wrap="word",
+            padx=10, 
+            pady=0
+        )
+        # Hide scrollbar
+        try:
+            if hasattr(self.lbl_rw, "_v_scrollbar"):
+                self.lbl_rw._v_scrollbar.grid_forget()
+                self.lbl_rw._v_scrollbar.pack_forget()
+        except: pass
+        
+        self.lbl_rw.insert("0.0", "🎯 准备开始复习")
+        self.lbl_rw.configure(state="disabled")
+        self.lbl_rw.pack(pady=(60, 10), fill="x", padx=40)
+        self.bind_context_menu(self.lbl_rw)
+
+        self.btn_rp = ctk.CTkButton(self.card, text="🔊", width=46, height=46, corner_radius=23, fg_color="#4CAF50", hover_color="#45a049", font=("Arial", 18), command=lambda: None)
         self.btn_rp.pack(pady=5)
 
-        self.txt_rm = ctk.CTkTextbox(self.card, width=500, height=200, font=FONT_NORMAL, fg_color="transparent")
-        self.txt_rm.pack(pady=10, fill="both", expand=True, padx=20)
+        self.txt_rm = ctk.CTkTextbox(self.card, font=("Microsoft YaHei UI", 15), fg_color="transparent", border_width=0, activate_scrollbars=True)
+        self.txt_rm.pack(pady=(5, 10), fill="both", expand=True, padx=40)
         self.bind_context_menu(self.txt_rm)
 
-        self.btn_rev = ctk.CTkButton(self, text="显示释义 (Space)", font=FONT_BOLD, width=200, height=45, command=self.reveal_meaning)
+        # Row 4: Integrated Exercise Desk (Bottom Area)
+        self.desk_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.desk_frame.pack(side="top", fill="x", padx=40, pady=(0, 5))
 
-        self.act_frame = ctk.CTkFrame(self, fg_color="transparent")
-        ctk.CTkButton(self.act_frame, text="忘记 (1)", fg_color="#F44336", width=100, height=40,
-                     command=lambda: self.process_review_sm2(1)).pack(side="left", padx=10)
-        ctk.CTkButton(self.act_frame, text="模糊 (2)", fg_color="#FF9800", width=100, height=40,
-                     command=lambda: self.process_review_sm2(3)).pack(side="left", padx=10)
-        ctk.CTkButton(self.act_frame, text="熟悉 (3)", fg_color="#4CAF50", width=100, height=40,
-                     command=lambda: self.process_review_sm2(5)).pack(side="left", padx=10)
+        # Sub-container: Reveal Button (Standard)
+        self.reveal_overlay = ctk.CTkFrame(self.desk_frame, fg_color="transparent")
+        self.btn_rev = ctk.CTkButton(self.reveal_overlay, text="🔍 显示释义 (Space)", font=("Microsoft YaHei UI", 16, "bold"), width=300, height=55, corner_radius=28, command=self.reveal_meaning)
+        self.btn_rev.pack(expand=True)
 
-        # Spelling UI
-        self.spelling_card = ctk.CTkFrame(self, height=550, fg_color=("gray90", "gray20"))
-        self.spelling_card.pack_propagate(False)
+        # Sub-container: Active Exercise (Spelling/Sentence)
+        self.exercise_overlay = ctk.CTkFrame(self.desk_frame, fg_color=("gray95", "#1e1e1e"), corner_radius=15, border_width=1, border_color=("gray90", "gray30"))
+        
+        self.lbl_ex_hint = ctk.CTkLabel(self.exercise_overlay, text="请输入拼写...", font=("Microsoft YaHei UI", 13), text_color="gray")
+        self.lbl_ex_hint.pack(pady=(15, 5))
 
-        self.lbl_spelling_hint = ctk.CTkLabel(self.spelling_card, text="根据释义拼写单词", font=("Microsoft YaHei UI", 14), text_color="gray")
-        self.lbl_spelling_hint.pack(pady=(20, 5))
+        self.entry_ex = ctk.CTkEntry(self.exercise_overlay, placeholder_text="Type here...", width=400, height=50, font=("Consolas", 20), justify="center", border_width=2)
+        self.entry_ex.pack(pady=(0, 15), padx=40)
+        self.entry_ex.bind("<Return>", lambda e: self.check_exercise())
 
-        self.txt_spelling_meaning = ctk.CTkTextbox(self.spelling_card, width=600, height=260, font=("Microsoft YaHei UI", 15), fg_color="transparent")
-        self.txt_spelling_meaning.pack(pady=10, padx=20)
-        self.txt_spelling_meaning.configure(state="disabled")
-        self.bind_context_menu(self.txt_spelling_meaning)
+        self.lbl_ex_result = ctk.CTkLabel(self.exercise_overlay, text="", font=("Microsoft YaHei UI", 15, "bold"))
+        self.lbl_ex_result.pack(pady=(0, 10))
 
-        self.btn_spelling_play = ctk.CTkButton(self.spelling_card, text="🔊 听发音", width=100, height=35, fg_color="green", font=("Microsoft YaHei UI", 13), command=lambda: None)
-        self.btn_spelling_play.pack(pady=5)
+        # Sub-container: Mastery Actions (Post-reveal)
+        self.act_frame = ctk.CTkFrame(self.desk_frame, fg_color="transparent")
+        ctk.CTkButton(self.act_frame, text="忘了 (1)", fg_color="#F44336", hover_color="#D32F2F", width=120, height=45, corner_radius=22, font=("Microsoft YaHei UI", 14, "bold"), command=lambda: self.process_review_sm2(1)).pack(side="left", padx=15)
+        ctk.CTkButton(self.act_frame, text="模糊 (2)", fg_color="#FF9800", hover_color="#F57C00", width=120, height=45, corner_radius=22, font=("Microsoft YaHei UI", 14, "bold"), command=lambda: self.process_review_sm2(3)).pack(side="left", padx=15)
+        ctk.CTkButton(self.act_frame, text="熟悉 (3)", fg_color="#4CAF50", hover_color="#388E3C", width=120, height=45, corner_radius=22, font=("Microsoft YaHei UI", 14, "bold"), command=lambda: self.process_review_sm2(5)).pack(side="left", padx=15)
 
-        input_frame = ctk.CTkFrame(self.spelling_card, fg_color="transparent")
-        input_frame.pack(pady=20, fill="x", padx=40)
+    def set_review_method(self, method):
+        if method == self.review_method: return
+        self.review_method = method
 
-        self.entry_spelling = ctk.CTkEntry(input_frame, placeholder_text="输入单词拼写...", width=350, height=50, font=("Microsoft YaHei UI", 18), justify="center")
-        self.entry_spelling.pack(side="left", padx=(0, 10))
-        self.entry_spelling.bind("<Return>", lambda e: self.check_spelling())
+        # Update Buttons
+        for m, btn in [("flashcard", self.btn_method_flashcard), ("spelling", self.btn_method_spelling), ("sentence", self.btn_method_sentence)]:
+            if m == method:
+                btn.configure(fg_color="#3B8ED0", text_color="white")
+            else:
+                btn.configure(fg_color=("gray90", "#2b2b2b"), text_color=("gray20", "gray80"))
 
-        self.btn_check_spelling = ctk.CTkButton(input_frame, text="✓ 检查", width=80, height=50, font=("Microsoft YaHei UI", 14, "bold"), fg_color="#4CAF50", hover_color="#45a049", command=self.check_spelling)
-        self.btn_check_spelling.pack(side="left")
-
-        self.spelling_result_frame = ctk.CTkFrame(self.spelling_card, fg_color="transparent")
-        self.spelling_result_frame.pack(fill="x", padx=20, pady=10)
-
-        self.lbl_spelling_result = ctk.CTkLabel(self.spelling_result_frame, text="", font=("Microsoft YaHei UI", 16, "bold"))
-        self.lbl_spelling_result.pack()
-        self.lbl_correct_answer = ctk.CTkLabel(self.spelling_result_frame, text="", font=("Microsoft YaHei UI", 14))
-        self.lbl_correct_answer.pack()
-
-        self.btn_spelling_next = ctk.CTkButton(self, text="下一个 (Enter)", width=150, height=45, font=("Microsoft YaHei UI", 14, "bold"), command=self.spelling_next)
+        self.start_review()
 
     def on_show(self):
         self.start_review()
-        self.bind_keys()
 
     def start_review(self):
         self.controller.reload_vocab_list()
@@ -134,14 +149,9 @@ class ReviewView(BaseView):
 
         self.queue = []
         for w in vocab_list:
-            # If NOT cram mode, skip mastered words
             if w.get('mastered', False) and not self.is_cram_mode: continue
-
             next_time = w.get('next_review_time', 0)
-            if self.is_cram_mode:
-                # In cram mode, include EVERYTHING regardless of time/mastery status
-                self.queue.append(w)
-            elif next_time <= now_ts:
+            if self.is_cram_mode or next_time <= now_ts:
                 self.queue.append(w)
 
         random.shuffle(self.queue)
@@ -149,17 +159,11 @@ class ReviewView(BaseView):
         self.review_completed = 0
         self.cur_word = None
         self.spelling_checked = False
-        self._event_bound = False  # 重置事件绑定状态
-
-        if self.review_method == "flashcard":
-            self.spelling_card.pack_forget()
-            self.btn_spelling_next.pack_forget()
-            self.next_card()
-        else:
-            self.card.pack_forget()
-            self.btn_rev.pack_forget()
-            self.act_frame.pack_forget()
-            self.next_spelling_card()
+        self._event_bound = False 
+        
+        # Unified entry point
+        self.next_card()
+        self.bind_keys()
 
     def create_context_menu(self):
         # Configure menu font
@@ -219,9 +223,8 @@ class ReviewView(BaseView):
         self.controller.bind("<space>", lambda e: self.on_space_key())
 
         def handle_key(quality):
-             # Check if buttons are actually visible (user has revealed meaning)
-             # And we must be in flashcard METHOD (regardless of cram scope)
-             if self.review_method == "flashcard" and self.act_frame.winfo_viewable():
+             # Enable hotkeys if mastery grading buttons are shown (any mode)
+             if self.act_frame.winfo_manager(): # Check if packed
                  self.process_review_sm2(quality)
 
         self.controller.bind("1", lambda e: handle_key(1))
@@ -230,18 +233,6 @@ class ReviewView(BaseView):
         self.controller.bind("<Left>", lambda e: handle_key(1))
         self.controller.bind("<Right>", lambda e: handle_key(5))
 
-    def set_review_method(self, method):
-        if method == self.review_method: return
-        self.review_method = method
-
-        if method == "flashcard":
-            self.btn_method_flashcard.configure(fg_color="#3B8ED0")
-            self.btn_method_spelling.configure(fg_color="gray")
-        else:
-            self.btn_method_flashcard.configure(fg_color="gray")
-            self.btn_method_spelling.configure(fg_color="#3B8ED0")
-
-        self.start_review()
 
     def toggle_cram_mode(self):
         self.is_cram_mode = not self.is_cram_mode
@@ -256,11 +247,16 @@ class ReviewView(BaseView):
     def next_card(self):
         self.txt_rm.configure(state="normal")
         self.txt_rm.delete("0.0", "end")
-        # Ensure textbox is initially cleared and reset
         self.txt_rm.configure(state="disabled")
+        
+        # Reset Desk State
+        for child in [self.reveal_overlay, self.exercise_overlay, self.act_frame]:
+            child.pack_forget()
 
-        self.btn_rev.pack(pady=20)
-        self.act_frame.pack_forget()
+        self.spelling_checked = False
+        self.entry_ex.configure(state="normal", border_color="gray")
+        self.entry_ex.delete(0, "end")
+        self.lbl_ex_result.configure(text="")
 
         remaining = len(self.queue)
         if self.review_total > 0:
@@ -271,95 +267,147 @@ class ReviewView(BaseView):
             self.review_progress_bar.set(1)
             self.lbl_review_progress.configure(text="无待复习单词")
 
+
         if not self.queue:
             self.show_finished_screen()
             return
 
-        self.card.pack(fill="both", expand=True, pady=20, padx=20)
         self.cur_word = self.queue[0]
-
-        # Cloze Deletion Logic
         word = self.cur_word['word']
         example = self.cur_word.get('example', '')
         context = self.cur_word.get('context_en', '')
 
-        display_text = word
-        hint_text = ""
+        # --- MODE 1: Flashcard (Recognition) ---
+        if self.review_method == "flashcard":
+            sentence = (example.split('\n')[0] if example else context)
+            display_text = word
+            if sentence:
+                masked = self.get_cloze_text(sentence, word)
+                if "____" in masked:
+                    display_text = masked
+            self.update_lbl_rw(display_text, FONT_NORMAL if len(display_text) > 25 else FONT_LARGE)
+            self.reveal_overlay.pack(expand=True, pady=10)
 
-        # Try to find a sentence to mask
-        sentence = ""
-        if example:
-            sentence = example.split('\n')[0] # Use first line of example
-        elif context:
-            sentence = context
-
-        if sentence:
-            masked_sentence = self.get_cloze_text(sentence, word)
-            if "____" in masked_sentence:
-                display_text = masked_sentence
-                hint_text = "(根据语境回想单词)"
-
-        self.lbl_rw.configure(text=display_text, font=FONT_NORMAL if len(display_text) > 20 else FONT_LARGE)
-
-        # Show a small hint if it's a cloze test
-        if hint_text:
+        # --- MODE 2: Spelling ---
+        elif self.review_method == "spelling":
+            self.update_lbl_rw("⌨️ 单词拼写", FONT_LARGE)
+            self.lbl_ex_hint.configure(text="根据释义拼写单词 (Enter 检查)")
+            
+            # Use the scrollable textbox for the meaning in spelling mode!
             self.txt_rm.configure(state="normal")
-            self.txt_rm.insert("0.0", f"\n\n\n\n          {hint_text}")
+            self.txt_rm.insert("0.0", self._clean_display_text(self.cur_word.get('meaning', '')))
             self.txt_rm.configure(state="disabled")
+            self.txt_rm.see("0.0")
+            
+            self.exercise_overlay.pack(fill="x", padx=40, pady=(0, 10))
+            self.entry_ex.focus_set()
 
-        # Use a safe play wrapper
+        # --- MODE 3: Sentence (Dictation) ---
+        elif self.review_method == "sentence":
+            sentence = (example.split('\n')[0] if example else context)
+            if not sentence:
+                self.update_lbl_rw("⌨️ 拼写练习 (无语境)", FONT_NORMAL)
+                self.lbl_ex_hint.configure(text="暂无语境，请根据释义拼写")
+            else:
+                self.update_lbl_rw(self.get_cloze_text(sentence, word), FONT_NORMAL)
+                self.lbl_ex_hint.configure(text="填空练习 (补全单词并回车)")
+            
+            # Also show meaning in textbox as a hint
+            self.txt_rm.configure(state="normal")
+            self.txt_rm.insert("0.0", self._clean_display_text(self.cur_word.get('meaning', '')))
+            self.txt_rm.configure(state="disabled")
+            self.txt_rm.see("0.0")
+
+            self.exercise_overlay.pack(fill="x", padx=40, pady=(0, 10))
+            self.entry_ex.focus_set()
+
+        # Audio Play (Auto)
         def safe_play():
-            if self.cur_word:
-                self.play_audio(self.cur_word['word'])
-
+            if self.cur_word: self.play_audio(self.cur_word['word'])
         self.btn_rp.configure(command=safe_play)
-        safe_play()
+        if self.review_method != "spelling": # Don't play in spelling mode until revealed/checked? Standard learning practice.
+            safe_play()
 
     def get_cloze_text(self, sentence, word):
         """Replace the word (and its common variations) with blanks."""
         import re
-        # Basic variations: word, words, worded, wording, word's
-        # This is a simple regex-based approach
-        pattern = re.compile(rf'\b{re.escape(word)}\w*\b', re.IGNORECASE)
-        return pattern.sub(" ____ ", sentence)
+        clean_word = word.strip().lower()
+        # Pattern to match the word at word boundaries, case-insensitive
+        pattern = re.compile(rf'\b{re.escape(clean_word)}\w*\b', re.IGNORECASE)
+        masked = pattern.sub(" ____ ", sentence)
+        return self._clean_display_text(masked)
 
-    def show_finished_screen(self):
-        vocab_list = self.controller.vocab_list
-        future_count = sum(1 for w in vocab_list if not w.get('mastered', False) and w.get('next_review_time', 0) > datetime.now().timestamp())
-        msg = "🎉 今日复习完成！"
-        if future_count > 0:
-            msg += f"\n还有 {future_count} 个单词未到复习时间"
+    def update_lbl_rw(self, text, font):
+        """Helper to update the selectable 'label' with dynamic height."""
+        self.lbl_rw.configure(state="normal")
+        self.lbl_rw.delete("0.0", "end")
+        self.lbl_rw.insert("0.0", text)
+        
+        # Calculate height
+        import re
+        lines = text.count('\n') + 1
+        est_lines = max(lines, len(text) // 30 + 1)
+        font_size = font[1] if isinstance(font, (tuple, list)) else 24
+        calc_height = est_lines * (font_size + 12) + 10
+        
+        self.lbl_rw.configure(height=calc_height, font=font, state="disabled")
 
-        if not self.is_cram_mode:
-            msg += "\n\n(可开启 '🚀 突击模式' 继续复习所有单词)"
-
-        if self.review_method == "flashcard":
-            self.lbl_rw.configure(text=msg)
-            self.btn_rev.pack_forget()
-        else:
-            self.spelling_card.pack_forget()
-            self.card.pack(fill="x", pady=20, padx=20)
-            self.lbl_rw.configure(text=msg)
-            self.btn_rev.pack_forget()
-            self.txt_rm.pack_forget() # Hide text box on finish in spelling mode if needed, or clear it
-
-        self.review_progress_bar.set(1)
-        self.lbl_review_progress.configure(text=f"已完成 {self.review_completed} 个单词")
+    def _clean_display_text(self, text):
+        """Standardize punctuation spacing to prevent ugly wrapping."""
+        if not text: return ""
+        import re
+        # Remove space before punctuation: "word ." -> "word."
+        text = re.sub(r'\s+([.,!?;:])', r'\1', text)
+        # Ensure space after punctuation if followed by text
+        text = re.sub(r'([.,!?;:])([a-zA-Z])', r'\1 \2', text)
+        return text.strip()
 
     def reveal_meaning(self):
         if not self.cur_word: return
-        # Restore the word in the label if it was masked
-        self.lbl_rw.configure(text=self.cur_word['word'], font=FONT_LARGE)
+        self.update_lbl_rw(self.cur_word['word'], FONT_LARGE)
 
-        txt = f"{self.cur_word.get('phonetic','')}\n\n[释义]\n{self.cur_word.get('meaning', '')}\n\n[字典例句]\n{self.cur_word.get('example', '')}"
-        if self.cur_word.get('context_en'):
-            txt += f"\n\n[✍️ 来源语境]\n{self.cur_word['context_en']}\n{self.cur_word.get('context_cn','')}"
+        txt = f"{self.cur_word.get('phonetic','')}\n\n[释义]\n{self.cur_word.get('meaning', '')}"
+        
+        examples = self.cur_word.get('example', '')
+        if examples:
+             txt += f"\n\n[精选例句]\n{self._clean_display_text(examples)}"
+             
+        context = self.cur_word.get('context_en', '')
+        if context:
+            context_cn = self.cur_word.get('context_cn', '')
+            txt += f"\n\n[✍️ 来源语境]\n{self._clean_display_text(context)}"
+            if context_cn:
+                txt += f"\n{context_cn}"
 
         self.txt_rm.configure(state="normal")
         self.txt_rm.insert("0.0", txt)
         self.txt_rm.configure(state="disabled")
-        self.btn_rev.pack_forget()
-        self.act_frame.pack(pady=20)
+        self.txt_rm.see("0.0")
+
+        # Switch to action desk
+        for child in [self.reveal_overlay, self.exercise_overlay]: child.pack_forget()
+        self.act_frame.pack(side="top", pady=20)
+        self.play_audio(self.cur_word['word'])
+
+    def check_exercise(self):
+        if not self.cur_word or self.spelling_checked: return
+        
+        user_input = self.entry_ex.get().strip().lower()
+        correct = self.cur_word['word'].strip().lower()
+        
+        self.spelling_checked = True
+        self.entry_ex.configure(state="disabled")
+        
+        if user_input == correct:
+            self.lbl_ex_result.configure(text="✅ 拼写正确！", text_color="#4CAF50")
+            self.entry_ex.configure(border_color="#4CAF50")
+            self.update_idletasks() # Ensure UI shows the result before the delay
+            self.after(800, self.reveal_meaning)
+        else:
+            self.lbl_ex_result.configure(text=f"❌ 拼写有误 (正确: {correct})", text_color="#F44336")
+            self.entry_ex.configure(border_color="#F44336")
+            self.update_idletasks()
+            self.after(2000, self.reveal_meaning)
 
     def process_review_sm2(self, quality):
         if not self.cur_word: return
@@ -389,121 +437,23 @@ class ReviewView(BaseView):
 
     def on_space_key(self):
         if self.review_method == "flashcard":
-            self.reveal_meaning()
+             if self.reveal_overlay.winfo_viewable():
+                 self.reveal_meaning()
         else:
-            if self.spelling_checked:
-                self.spelling_next()
+            if not self.spelling_checked:
+                self.check_exercise()
             else:
-                self.check_spelling()
+                # If revealed, maybe Space doesn't do much or goes to next if 熟悉?
+                # Usually Enter handles checking.
+                pass
 
-    # Spelling mode methods
-    def next_spelling_card(self):
-        self.spelling_checked = False
-        self.entry_spelling.configure(border_color="gray", state="normal")
-        self.entry_spelling.delete(0, "end")
-        self.lbl_spelling_result.configure(text="")
-        self.lbl_correct_answer.configure(text="")
-        self.btn_check_spelling.configure(state="normal", text="✓ 检查")
-        self.btn_spelling_next.pack_forget()
-
-        remaining = len(self.queue)
-        if self.review_total > 0:
-            progress = self.review_completed / self.review_total
-            self.review_progress_bar.set(progress)
-            self.lbl_review_progress.configure(text=f"进度: {self.review_completed}/{self.review_total}  剩余: {remaining} 个")
-
-        if not self.queue:
-            self.show_finished_screen()
-            return
-
-        self.spelling_card.pack(fill="x", pady=20, padx=20)
-        self.cur_word = self.queue[0]
-
-        meaning_text = f"{self.cur_word.get('phonetic', '')}\n\n{self.cur_word['meaning']}"
-
-        # Cloze Deletion for Spelling Mode
-        word = self.cur_word['word']
-        example = self.cur_word.get('example', '')
-        context = self.cur_word.get('context_en', '')
-        sentence = (example.split('\n')[0] if example else context)
-
-        if sentence:
-            masked = self.get_cloze_text(sentence, word)
-            if "____" in masked:
-                meaning_text += f"\n\n[语境填空]\n{masked}"
-        elif example:
-             meaning_text += f"\n\n[例句] {example}"
-
-        self.txt_spelling_meaning.configure(state="normal")
-        self.txt_spelling_meaning.delete("0.0", "end")
-        self.txt_spelling_meaning.insert("0.0", meaning_text)
-        self.txt_spelling_meaning.configure(state="disabled")
-
-        def safe_play_spelling():
-            if self.cur_word:
-                self.play_audio(self.cur_word['word'])
-
-        self.btn_spelling_play.configure(command=safe_play_spelling)
-        safe_play_spelling()
-        self.entry_spelling.focus_set()
-
-        # 避免重复绑定事件处理器
-        if not self._event_bound:
-            self.controller.unbind("<Return>")
-            self.controller.bind("<Return>", lambda e: self.check_spelling())
-            self._event_bound = True
-
-    def check_spelling(self):
-        if not self.cur_word or self.spelling_checked: return
-        user_input_raw = self.entry_spelling.get().strip()
-        user_input_clean = user_input_raw.lower().strip(".,;?!")
-        correct_word_raw = self.cur_word['word'].strip()
-        correct_word_clean = correct_word_raw.lower().strip(".,;?!")
-
-        self.spelling_checked = True
-        self.entry_spelling.configure(state="disabled")
-        self.btn_check_spelling.configure(state="disabled")
-
-        if user_input_clean == correct_word_clean:
-            self.lbl_spelling_result.configure(text="✅ 正确！", text_color="green")
-            self.lbl_correct_answer.configure(text=f"单词: {correct_word_raw}", text_color="green")
-            self.entry_spelling.configure(border_color="green")
-            self.spelling_correct = True
-        else:
-            self.lbl_spelling_result.configure(text="❌ 错误", text_color="red")
-            self.lbl_correct_answer.configure(text=f"正确答案: {correct_word_raw}\n你的输入: {user_input_raw or '(空)'}", text_color="red")
-            self.entry_spelling.configure(border_color="red")
-            self.spelling_correct = False
-
-        self.btn_spelling_next.pack(pady=20)
-        self.btn_spelling_next.focus_set()
-        self.controller.unbind("<Return>")
-        self.controller.bind("<Return>", lambda e: self.spelling_next())
-        self._event_bound = False  # 重置事件绑定状态
-
-    def spelling_next(self):
-        if not self.cur_word: return
-        word = self.cur_word['word']
-        ok = getattr(self, 'spelling_correct', False)
-
-        stage = self.cur_word.get('stage', 0)
-        new_stage, next_ts, mastered = ReviewService.calculate_simple_stage(ok, stage)
-
-        self.controller.db.update_review_status(word, new_stage, next_ts, mastered)
-        self.controller.reload_vocab_list()
-
-        with self._queue_lock:
-            if not self.queue:
-                self.next_spelling_card()
-                return
-            self.queue.pop(0)
-
-            if ok:
-                self.review_completed += 1
-            else:
-                updated_word = self.controller.db.get_word(word)
-                if updated_word:
-                    insert_pos = random.randint(1, len(self.queue)) if len(self.queue) > 0 else 0
-                    self.queue.insert(insert_pos, updated_word)
-
-        self.next_spelling_card()
+    def show_finished_screen(self):
+        msg = "🎉 今日复习完毕！"
+        self.update_lbl_rw(msg, ("Microsoft YaHei UI", 24, "bold"))
+        self.txt_rm.configure(state="normal")
+        self.txt_rm.delete("0.0", "end")
+        self.txt_rm.insert("0.0", "\n\n        所有待复习单词已完成。您可以尝试‘突击模式’或切换复习模式。")
+        self.txt_rm.configure(state="disabled")
+        for child in [self.reveal_overlay, self.exercise_overlay, self.act_frame]: child.pack_forget()
+        self.review_progress_bar.set(1)
+        self.lbl_review_progress.configure(text=f"已完成 {self.review_completed} 个单词")

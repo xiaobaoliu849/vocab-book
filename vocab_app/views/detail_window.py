@@ -1,5 +1,6 @@
 import customtkinter as ctk
 import tkinter as tk
+import re
 import threading
 from datetime import datetime
 from ..services.audio_service import AudioService
@@ -9,164 +10,334 @@ from ..config import FONT_NORMAL
 import webbrowser
 
 class DetailWindow(ctk.CTkToplevel):
-    def __init__(self, master, item, controller):
+    def __init__(self, master, item, controller, items_list=None, current_index=0):
         super().__init__(master)
         self.item = item
         self.controller = controller
-        self.multi_dict_frames = {}  # 存储各词典的可折叠区块
+        self.items_list = items_list or [item]
+        self.current_index = current_index
+        self.multi_dict_frames = {}
 
         self.title(f"单词详情: {item['word']}")
-        self.geometry("650x800")
+        self.geometry("680x880") # Slightly taller for navigation
 
         self.setup_ui()
-        self.grab_set()
-
-        # 在后台查询其他词典
-        self.load_multi_dict_results()
+        self.load_word_data()
+        
+        # Remove grab_set() as it can block minimize button on some Windows environments.
+        # Use focus_force to ensure it pops up but remains a standard window.
+        self.after(10, self.focus_force)
 
     def setup_ui(self):
-        # Header
+        self.configure(fg_color=("white", "#1e1e1e"))
+        
+        # --- Header Section with Navigation ---
         header = ctk.CTkFrame(self, fg_color="transparent")
-        header.pack(fill="x", padx=20, pady=(20, 10))
+        header.pack(fill="x", padx=30, pady=(20, 10))
 
-        # Left side: Word and Phonetic
-        word_info = ctk.CTkFrame(header, fg_color="transparent")
-        word_info.pack(side="left", fill="y")
+        # Navigation & Branding Row (Centered Pill Style)
+        nav_container = ctk.CTkFrame(header, fg_color="transparent")
+        nav_container.pack(fill="x", pady=(0, 10))
+        
+        # Inner centered group
+        self.nav_group = ctk.CTkFrame(nav_container, fg_color="transparent")
+        self.nav_group.place(relx=0.5, rely=0.5, anchor="center")
+        
+        # Modern Ghost Navigation Buttons
+        self.btn_prev = ctk.CTkButton(
+            self.nav_group, text="‹", width=34, height=34, corner_radius=17,
+            fg_color="transparent", text_color=("#3B8ED0", "#64B5F6"),
+            border_width=1, border_color=("#3B8ED0", "#64B5F6"),
+            hover_color=("#E3F2FD", "#1a3a5a"), 
+            font=("Arial", 22, "bold"),
+            command=self.prev_word
+        )
+        self.btn_prev.pack(side="left", padx=5)
 
-        ctk.CTkLabel(word_info, text=self.item['word'], font=("Microsoft YaHei UI", 28, "bold")).pack(side="left")
+        # Page Indicator (e.g., 5 / 120) - Modern font
+        self.lbl_nav_info = ctk.CTkLabel(
+            self.nav_group, text="", 
+            font=("Segoe UI Semibold", 13), 
+            text_color=("#555555", "#aaaaaa")
+        )
+        self.lbl_nav_info.pack(side="left", padx=15)
 
-        phonetic = self.item.get('phonetic', '')
-        if phonetic:
-            ctk.CTkLabel(word_info, text=f"  {phonetic}", font=("Microsoft YaHei UI", 16), text_color="gray").pack(side="left", padx=10)
+        self.btn_next = ctk.CTkButton(
+            self.nav_group, text="›", width=34, height=34, corner_radius=17,
+            fg_color="transparent", text_color=("#3B8ED0", "#64B5F6"),
+            border_width=1, border_color=("#3B8ED0", "#64B5F6"),
+            hover_color=("#E3F2FD", "#1a3a5a"), 
+            font=("Arial", 22, "bold"),
+            command=self.next_word
+        )
+        self.btn_next.pack(side="left", padx=5)
 
-        # Right side: Play Button (Priority)
-        self.btn_play = ctk.CTkButton(header, text="🔊", width=45, height=35, font=("Arial", 18), fg_color="green", command=self.play_audio)
-        self.btn_play.pack(side="right", padx=(10, 0))
+        # Ensure container has enough height for the localized group
+        nav_container.configure(height=45)
+        nav_container.pack_propagate(False)
 
-        # Tags (Optional, in the middle/left)
-        tags = self.item.get('tags', '')
-        if tags:
-            # If tags are too long, we might want to truncate or wrap
-            display_tags = tags[:20] + "..." if len(tags) > 20 else tags
-            tag_frame = ctk.CTkFrame(header, fg_color=("#E3F2FD", "#1A237E"), corner_radius=6)
-            tag_frame.pack(side="right", padx=10)
-            ctk.CTkLabel(tag_frame, text=display_tags, font=("Microsoft YaHei UI", 11, "bold"), text_color=("#1976D2", "#BBDEFB")).pack(padx=8, pady=2)
+        # Main Info area (Centered word)
+        info_container = ctk.CTkFrame(header, fg_color="transparent")
+        info_container.pack(fill="x", pady=(15, 0))
 
-        # Source context badge (Below word info if present)
-        source_cn = self.item.get('context_cn', '')
-        if source_cn:
-            # Handle the long source context visible in the screenshot
-            source_frame = ctk.CTkFrame(self, fg_color=("#E3F2FD", "#1A237E"), corner_radius=4)
-            source_frame.pack(fill="x", padx=20, pady=(0, 10))
+        self.word_label = ctk.CTkLabel(
+            info_container, text="", 
+            font=("Microsoft YaHei UI", 42, "bold"), 
+            text_color=("#1a1a1a", "#ffffff"),
+            anchor="w"
+        )
+        self.word_label.pack(side="left")
 
-            # Use a label that can wrap or be truncated
-            short_source = source_cn
-            if len(short_source) > 60:
-                short_source = short_source[:60] + "..."
+        self.phonetic_label = ctk.CTkLabel(
+            info_container, text="", 
+            font=("Arial", 20), 
+            text_color=("#3B8ED0", "#64B5F6")
+        )
+        self.phonetic_label.pack(side="left", padx=20)
 
-            ctk.CTkLabel(source_frame, text=f"来源: {short_source}", font=("Microsoft YaHei UI", 12),
-                        text_color=("#1976D2", "#64B5F6"), wraplength=580, justify="left").pack(padx=10, pady=5, anchor="w")
+        # Right Actions
+        actions_header = ctk.CTkFrame(header, fg_color="transparent")
+        actions_header.pack(side="right", fill="y")
 
-        # Context Menu
+        self.btn_play = ctk.CTkButton(
+            actions_header, text="🔊", width=44, height=44, corner_radius=22, 
+            font=("Arial", 20), fg_color=("#4CAF50", "#2E7D32"), 
+            hover_color=("#388E3C", "#1B5E20"), command=self.play_audio
+        )
+        self.btn_play.pack(side="right")
+
+        # --- Main Scrollable Content ---
+        self.scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        self.scroll.pack(fill="both", expand=True, padx=25, pady=(0, 10))
+
+        # Static placeholder for dynamic content to fix order
+        self.content_container = ctk.CTkFrame(self.scroll, fg_color="transparent")
+        self.content_container.pack(fill="x")
+
+        # Fixed position containers
+        self.multi_dict_section = ctk.CTkFrame(self.scroll, fg_color="transparent")
+        self.multi_dict_section.pack(fill="x")
+
+        self.word_family_section = ctk.CTkFrame(self.scroll, fg_color="transparent")
+        self.word_family_section.pack(fill="x")
+
+        self.stats_section = ctk.CTkFrame(self.scroll, fg_color="transparent")
+        self.stats_section.pack(fill="x")
+
         self.create_context_menu()
 
-        # Info
-        scroll = ctk.CTkScrollableFrame(self)
-        scroll.pack(fill="both", expand=True, padx=20, pady=(0, 20))
+    def load_word_data(self):
+        """Load or refresh the data for the current index."""
+        self.item = self.items_list[self.current_index]
+        self.title(f"单词详情: {self.item['word']}")
+        
+        # 1. Update Header
+        self.word_label.configure(text=self.item['word'])
+        phonetic = self.item.get('phonetic', '')
+        self.phonetic_label.configure(text=f"/{phonetic}/" if phonetic else "")
+        
+        # Update Nav context info
+        self.lbl_nav_info.configure(text=f"{self.current_index + 1}  /  {len(self.items_list)}")
 
-        self.add_section_header(scroll, "📖 释义")
-        txt_meaning = ctk.CTkTextbox(scroll, height=100, font=FONT_NORMAL)
-        txt_meaning.pack(fill="x", pady=(5, 15))
-        txt_meaning.insert("0.0", self.item.get('meaning', ''))
-        txt_meaning.configure(state="disabled")
-        self.bind_context_menu(txt_meaning)
+        # Update Nav buttons state (Disabled instead of packing/unpacking for stability)
+        if self.current_index > 0:
+            self.btn_prev.configure(state="normal", border_color=("#3B8ED0", "#64B5F6"))
+        else:
+            self.btn_prev.configure(state="disabled", border_color="gray80")
 
-        self.add_section_header(scroll, "📝 例句")
-        txt_example = ctk.CTkTextbox(scroll, height=100, font=FONT_NORMAL)
-        txt_example.pack(fill="x", pady=(5, 15))
-        txt_example.insert("0.0", self.item.get('example', ''))
-        txt_example.configure(state="disabled")
-        self.bind_context_menu(txt_example)
+        if self.current_index < len(self.items_list) - 1:
+            self.btn_next.configure(state="normal", border_color=("#3B8ED0", "#64B5F6"))
+        else:
+            self.btn_next.configure(state="disabled", border_color="gray80")
 
-        if self.item.get('roots'):
-            self.add_section_header(scroll, "🌱 词根词缀")
-            txt_roots = ctk.CTkTextbox(scroll, height=60, font=FONT_NORMAL)
-            txt_roots.pack(fill="x", pady=(5, 15))
-            txt_roots.insert("0.0", self.item.get('roots', ''))
-            txt_roots.configure(state="disabled")
-            self.bind_context_menu(txt_roots)
+        # 2. Clear Containers
+        for widget in self.content_container.winfo_children(): widget.destroy()
+        for widget in self.multi_dict_section.winfo_children(): widget.destroy()
+        for widget in self.word_family_section.winfo_children(): widget.destroy()
+        for widget in self.stats_section.winfo_children(): widget.destroy()
 
-        if self.item.get('synonyms'):
-            self.add_section_header(scroll, "🔗 同近义词")
-            txt_syn = ctk.CTkTextbox(scroll, height=60, font=FONT_NORMAL)
-            txt_syn.pack(fill="x", pady=(5, 15))
-            txt_syn.insert("0.0", self.item.get('synonyms', ''))
-            txt_syn.configure(state="disabled")
-            self.bind_context_menu(txt_syn)
+        # 3. Populate Primary Content
+        self.create_content_card(self.content_container, "📖 核心释义", self.item.get('meaning', ''), accent_color="#3B8ED0")
+        if self.item.get('example'):
+            self.create_content_card(self.content_container, "📝 经典例句", self.item.get('example', ''), accent_color="#FF9800")
 
-        # 多词典聚合区域
-        self.add_section_header(scroll, "📚 多词典释义")
-        self.multi_dict_container = ctk.CTkFrame(scroll, fg_color="transparent")
-        self.multi_dict_container.pack(fill="x", pady=(5, 15))
-
-        # 加载提示
-        self.multi_dict_loading = ctk.CTkLabel(
-            self.multi_dict_container,
-            text="⏳ 正在查询其他词典...",
-            font=("Microsoft YaHei UI", 12),
-            text_color="gray"
-        )
-        self.multi_dict_loading.pack(pady=10)
+        if self.item.get('roots') or self.item.get('synonyms'):
+            extra_container = ctk.CTkFrame(self.content_container, fg_color="transparent")
+            extra_container.pack(fill="x", pady=5)
+            extra_container.grid_columnconfigure((0, 1), weight=1)
+            if self.item.get('roots'):
+                self.create_small_card(extra_container, "🌱 词根", self.item.get('roots', ''), 0, "#4CAF50")
+            if self.item.get('synonyms'):
+                self.create_small_card(extra_container, "🔗 同义", self.item.get('synonyms', ''), 1, "#9C27B0")
 
         if self.item.get('context_en'):
-            self.add_section_header(scroll, "✍️ 来源语境")
-            ctx_text = f"{self.item['context_en']}\n{self.item.get('context_cn','')}"
-            txt_ctx = ctk.CTkTextbox(scroll, height=100, font=FONT_NORMAL)
-            txt_ctx.pack(fill="x", pady=(5, 15))
-            txt_ctx.insert("0.0", ctx_text)
-            txt_ctx.configure(state="disabled")
-            self.bind_context_menu(txt_ctx)
+            ctx_text = f"{self.item['context_en']}\n\n{self.item.get('context_cn','')}".strip()
+            self.create_content_card(self.content_container, "✍️ 来源语境", ctx_text, accent_color="#9C27B0")
 
-        # Word Family Section (派生词群组)
-        self.setup_word_family_section(scroll)
+        # 4. Global Action Footer (Re-packed at bottom if needed, but here we use a container)
+        # Note: Footer is packed to window bottom in __init__? Actually it's in setup_ui.
+        # Fixed footer below the scrollbox
+        if not hasattr(self, 'footer'):
+            self.setup_footer()
 
-        # Review Stats
-        self.add_section_header(scroll, "📊 复习数据")
-        stats_frame = ctk.CTkFrame(scroll, fg_color="transparent")
-        stats_frame.pack(fill="x", pady=5)
+        # 5. Populate Async Sections (Containers are already in fixed order)
+        self.add_section_header(self.multi_dict_section, "📚 聚合词典详情")
+        self.multi_dict_container = ctk.CTkFrame(self.multi_dict_section, fg_color="transparent")
+        self.multi_dict_container.pack(fill="x", pady=(5, 10))
+        self.multi_dict_loading = ctk.CTkLabel(self.multi_dict_container, text="⏳ 检索增强中...", font=("Microsoft YaHei UI", 12), text_color="gray")
+        self.multi_dict_loading.pack(pady=10)
 
-        stats = [
-            f"复习次数: {self.item.get('review_count', 0)}",
-            f"掌握状态: {'✅ 已掌握' if self.item.get('mastered') else '📚 学习中'}",
-            f"下次复习: {self.format_next_review(self.item.get('next_review_time', 0))}",
-            f"SM-2 难度 (Easiness): {self.item.get('easiness', 2.5):.2f}",
-            f"当前间隔: {self.item.get('interval', 0)} 天"
-        ]
+        self.setup_word_family_section(self.word_family_section)
+        self.setup_stats_dashboard(self.stats_section)
 
-        for s in stats:
-            ctk.CTkLabel(stats_frame, text=f"• {s}", font=("Microsoft YaHei UI", 13), anchor="w").pack(fill="x", padx=10)
+        # 6. Kick off Background Tasks
+        self.multi_dict_frames = {}
+        self.load_multi_dict_results()
 
-        # Actions
-        action_frame = ctk.CTkFrame(self, fg_color="transparent")
-        action_frame.pack(fill="x", padx=20, pady=20)
+    def prev_word(self):
+        if self.current_index > 0:
+            self.current_index -= 1
+            self.load_word_data()
+            self._scroll_to_top()
 
-        ctk.CTkButton(action_frame, text="✏️ 编辑 (在主界面)", fg_color="#3B8ED0", command=self.edit_word).pack(side="left", expand=True, padx=5)
-        ctk.CTkButton(action_frame, text="🗑️ 删除", fg_color="red", command=self.delete_word).pack(side="left", expand=True, padx=5)
+    def next_word(self):
+        if self.current_index < len(self.items_list) - 1:
+            self.current_index += 1
+            self.load_word_data()
+            self._scroll_to_top()
+
+    def _scroll_to_top(self):
+        # Access internal canvas for scrolling
+        try:
+            self.scroll._parent_canvas.yview_moveto(0)
+        except:
+            pass
+
+    def setup_footer(self):
+        self.footer = ctk.CTkFrame(self, fg_color="transparent", height=70)
+        self.footer.pack(fill="x", side="bottom", padx=30, pady=15)
+        self.footer.pack_propagate(False)
+
+        ctk.CTkButton(
+            self.footer, text="✏️ 编辑单词", height=40, corner_radius=20,
+            fg_color=("#3B8ED0", "#1f538d"), font=("Microsoft YaHei UI", 13, "bold"),
+            command=self.edit_word
+        ).pack(side="left", expand=True, padx=8)
+
+        ctk.CTkButton(
+            self.footer, text="🗑️ 彻底删除", height=40, corner_radius=20,
+            fg_color="#F44336", hover_color="#D32F2F", font=("Microsoft YaHei UI", 13, "bold"),
+            command=self.delete_word
+        ).pack(side="left", expand=True, padx=8)
+
+    def create_selectable_text(self, parent, text, font_size, width_chars, color=None):
+        """Creates a selectable text area that looks like a label and auto-adjusts height."""
+        text = text.strip()
+        # Clean spacing
+        text = re.sub(r'\.([a-zA-Z])', r'. \1', text)
+        
+        # Height estimation
+        lines = text.count('\n') + 1
+        est_lines = max(lines, len(text) // width_chars + 1)
+        # 1.6x font size usually covers line height in pixels
+        calc_height = est_lines * (font_size + 8) + 10
+
+        txt = ctk.CTkTextbox(
+            parent, 
+            height=calc_height, 
+            font=("Microsoft YaHei UI", font_size),
+            fg_color="transparent",
+            text_color=color,
+            border_width=0,
+            wrap="word",
+            padx=0, pady=0
+        )
+        # --- CRITICAL HACK: Hide the internal scrollbar to prevent "dropdown" appearance ---
+        try:
+            if hasattr(txt, "_v_scrollbar"):
+                txt._v_scrollbar.grid_forget()
+                txt._v_scrollbar.pack_forget()
+        except:
+            pass
+
+        txt.insert("0.0", text)
+        txt.configure(state="disabled")
+        self.bind_context_menu(txt)
+        return txt
+
+    def create_content_card(self, parent, title, content, accent_color):
+        card = ctk.CTkFrame(parent, fg_color=("white", "#2b2b2b"), corner_radius=16, border_width=1, border_color=("gray90", "gray30"))
+        card.pack(fill="x", pady=6) # Reduced pady
+        
+        # Left Accent Border
+        accent = ctk.CTkFrame(card, width=4, fg_color=accent_color, corner_radius=2)
+        accent.pack(side="left", fill="y", padx=(12, 0), pady=12)
+
+        inner_frame = ctk.CTkFrame(card, fg_color="transparent")
+        inner_frame.pack(side="left", fill="both", expand=True, padx=15, pady=10)
+
+        ctk.CTkLabel(inner_frame, text=title, font=("Microsoft YaHei UI", 12, "bold"), text_color="gray50", anchor="w").pack(fill="x")
+        
+        self.create_selectable_text(inner_frame, content, 13, 50).pack(fill="x", pady=(2, 0))
+
+    def create_small_card(self, parent, title, content, column, color):
+        card = ctk.CTkFrame(parent, fg_color=("white", "#2b2b2b"), corner_radius=12, border_width=1, border_color=("gray90", "gray30"))
+        card.grid(row=0, column=column, sticky="nsew", padx=5)
+        
+        header_frame = ctk.CTkFrame(card, fg_color="transparent")
+        header_frame.pack(fill="x", padx=10, pady=(8, 2))
+        
+        ctk.CTkLabel(header_frame, text=title, font=("Microsoft YaHei UI", 11, "bold"), text_color=color, anchor="w").pack(side="left")
+        
+        self.create_selectable_text(card, content, 12, 24).pack(fill="x", padx=10, pady=(0, 8))
+
+    def setup_stats_dashboard(self, parent):
+        self.add_section_header(parent, "📊 复习数据面板")
+        dash = ctk.CTkFrame(parent, fg_color="transparent")
+        dash.pack(fill="x", pady=5)
+        dash.grid_columnconfigure((0, 1), weight=1)
+
+        def create_stat_tile(row, col, label, value, icon):
+            tile = ctk.CTkFrame(dash, fg_color=("gray95", "#242424"), corner_radius=10, height=50)
+            tile.grid(row=row, column=col, sticky="ew", padx=3, pady=3)
+            tile.grid_propagate(False)
+            
+            icon_lbl = ctk.CTkLabel(tile, text=icon, font=("Arial", 16))
+            icon_lbl.pack(side="left", padx=(10, 5))
+            
+            txt_container = ctk.CTkFrame(tile, fg_color="transparent")
+            txt_container.pack(side="left", fill="y", pady=5)
+            
+            ctk.CTkLabel(txt_container, text=label, font=("Microsoft YaHei UI", 10), text_color="gray50").pack(anchor="w")
+            ctk.CTkLabel(txt_container, text=value, font=("Microsoft YaHei UI", 12, "bold")).pack(anchor="w")
+
+        r_count = str(self.item.get('review_count', 0))
+        status = '已掌握' if self.item.get('mastered') else '学习中'
+        next_rev = self.format_next_review(self.item.get('next_review_time', 0))
+        interval = f"{self.item.get('interval', 0)} 天"
+
+        create_stat_tile(0, 0, "回想次数", r_count, "🔄")
+        create_stat_tile(0, 1, "掌握进度", status, "🏆")
+        create_stat_tile(1, 0, "复习安排", next_rev, "📅")
+        create_stat_tile(1, 1, "记忆间隔", interval, "⏳")
 
     def add_section_header(self, parent, text):
         ctk.CTkLabel(parent, text=text, font=("Microsoft YaHei UI", 14, "bold"), text_color="gray50", anchor="w").pack(fill="x", pady=(5, 0))
 
     def setup_word_family_section(self, parent):
         """设置派生词群组区域"""
-        # 在后台线程中获取派生词信息
+        # Capture the word for which we are loading data to prevent race conditions
+        current_word = self.item['word']
+        
         def load_word_families():
             try:
                 word_family_data = WordFamilyService.get_derivatives(
-                    self.item['word'],
+                    current_word,
                     self.controller.db
                 )
-                # 更新UI需要在主线程
-                self.after(0, lambda: self.display_word_families(parent, word_family_data))
+                # Check if the word still matches (user might have navigated)
+                if self.winfo_exists() and self.item['word'] == current_word:
+                    self.after(0, lambda: self.display_word_families(parent, word_family_data))
             except Exception as e:
                 print(f"Error loading word families: {e}")
 
@@ -187,20 +358,20 @@ class DetailWindow(ctk.CTkToplevel):
             not_in_vocab = family.get('not_in_vocab', [])
 
             # 词根标题框
-            root_frame = ctk.CTkFrame(parent, fg_color=("#E8F5E9", "#1B5E20"), corner_radius=8)
-            root_frame.pack(fill="x", pady=(8, 5), padx=5)
+            root_frame = ctk.CTkFrame(parent, fg_color=("#E8F5E9", "#1B5E20"), corner_radius=12)
+            root_frame.pack(fill="x", pady=(12, 5))
 
             root_label = ctk.CTkLabel(
                 root_frame,
-                text=f"词根: {root}- ({meaning})",
-                font=("Microsoft YaHei UI", 13, "bold"),
+                text=f"🌳 词根: {root}- ({meaning})",
+                font=("Microsoft YaHei UI", 12, "bold"),
                 text_color=("#1B5E20", "#A5D6A7")
             )
-            root_label.pack(anchor="w", padx=10, pady=8)
+            root_label.pack(anchor="w", padx=15, pady=10)
 
             # 派生词容器
             words_frame = ctk.CTkFrame(parent, fg_color="transparent")
-            words_frame.pack(fill="x", padx=10, pady=(0, 10))
+            words_frame.pack(fill="x", padx=5, pady=(0, 10))
 
             # 已在词库的派生词
             if in_vocab:
@@ -258,9 +429,19 @@ class DetailWindow(ctk.CTkToplevel):
         """查看词库中已有的单词"""
         word_data = self.controller.db.get_word(word)
         if word_data:
-            # 关闭当前窗口，打开新的详情窗口
-            self.destroy()
-            DetailWindow(self.master, word_data, self.controller)
+            # Check if it's already in our current navigation list
+            for i, itm in enumerate(self.items_list):
+                if itm['word'].lower() == word.lower():
+                    self.current_index = i
+                    self.load_word_data()
+                    self._scroll_to_top()
+                    return
+            
+            # If not in list, add it to the list right after current word and navigate to it
+            self.items_list.insert(self.current_index + 1, word_data)
+            self.current_index += 1
+            self.load_word_data()
+            self._scroll_to_top()
 
     def quick_add_word(self, word):
         """快速添加派生词到词库"""
@@ -363,6 +544,8 @@ class DetailWindow(ctk.CTkToplevel):
 
     def load_multi_dict_results(self):
         """在后台线程中查询多词典"""
+        current_word = self.item['word']
+        
         def query_dicts():
             try:
                 # 获取启用的词典
@@ -383,21 +566,23 @@ class DetailWindow(ctk.CTkToplevel):
                 results = {}
 
                 if "bing" in enabled:
-                    bing_result = MultiDictService.search_bing(self.item['word'])
+                    bing_result = MultiDictService.search_bing(current_word)
                     if bing_result:
                         results["bing"] = bing_result
 
                 if "freedict" in enabled:
-                    free_result = MultiDictService.search_free_dict(self.item['word'])
+                    free_result = MultiDictService.search_free_dict(current_word)
                     if free_result:
                         results["freedict"] = free_result
 
-                # 更新UI
-                self.after(0, lambda: self.display_multi_dict_results(results))
+                # 更新UI前检查窗口是否存在且单词依然匹配
+                if self.winfo_exists() and self.item['word'] == current_word:
+                    self.after(0, lambda: self.display_multi_dict_results(results))
 
             except Exception as e:
                 print(f"Multi-dict query error: {e}")
-                self.after(0, self.hide_multi_dict_loading)
+                if self.winfo_exists() and self.item['word'] == current_word:
+                    self.after(0, self.hide_multi_dict_loading)
 
         threading.Thread(target=query_dicts, daemon=True).start()
 
@@ -429,37 +614,37 @@ class DetailWindow(ctk.CTkToplevel):
             self.create_dict_block(source, data)
 
     def create_dict_block(self, source, data):
-        """创建可折叠的词典区块"""
+        """创建现代化的可折叠词典区块"""
         source_name = data.get('source_name', source)
 
-        # 词典颜色配置
+        # 词典颜色配置 (Enhanced contrast for modern theme)
         colors = {
-            "bing": {"bg": ("#E3F2FD", "#0D47A1"), "header": ("#1976D2", "#64B5F6"), "icon": "🔷"},
-            "freedict": {"bg": ("#F3E5F5", "#4A148C"), "header": ("#7B1FA2", "#CE93D8"), "icon": "📖"},
-            "youdao": {"bg": ("#E8F5E9", "#1B5E20"), "header": ("#388E3C", "#81C784"), "icon": "📗"},
+            "bing": {"bg": ("#E3F2FD", "#102a43"), "header": ("#0062cc", "#64B5F6"), "icon": "🔷"},
+            "freedict": {"bg": ("#F3E5F5", "#2a1535"), "header": ("#7B1FA2", "#CE93D8"), "icon": "⚛️"},
+            "youdao": {"bg": ("#E8F5E9", "#0e2f10"), "header": ("#2E7D32", "#81C784"), "icon": "🍏"},
         }
-        color = colors.get(source, {"bg": ("#F5F5F5", "#424242"), "header": ("#757575", "#BDBDBD"), "icon": "📚"})
+        color = colors.get(source, {"bg": ("#F5F5F5", "#242424"), "header": ("#757575", "#BDBDBD"), "icon": "📁"})
 
         # 外层容器
         block = ctk.CTkFrame(
             self.multi_dict_container,
             fg_color=color["bg"],
-            corner_radius=10
+            corner_radius=12,
+            border_width=1,
+            border_color=("gray90", "gray20")
         )
-        block.pack(fill="x", pady=5)
+        block.pack(fill="x", pady=6)
 
         # 头部（可点击折叠）
-        header = ctk.CTkFrame(block, fg_color="transparent", cursor="hand2")
-        header.pack(fill="x", padx=10, pady=(10, 5))
+        header = ctk.CTkFrame(block, fg_color="transparent", cursor="hand2", height=44)
+        header.pack(fill="x", padx=12, pady=5)
+        header.pack_propagate(False)
 
         # 展开/折叠指示
         expand_label = ctk.CTkLabel(
-            header,
-            text="▼",
-            font=("Microsoft YaHei UI", 12),
-            text_color=color["header"]
+            header, text="▼", font=("Arial", 14), text_color=color["header"]
         )
-        expand_label.pack(side="left", padx=(0, 5))
+        expand_label.pack(side="left", padx=(5, 10))
 
         # 词典名称
         ctk.CTkLabel(
@@ -469,102 +654,44 @@ class DetailWindow(ctk.CTkToplevel):
             text_color=color["header"]
         ).pack(side="left")
 
-        # 音标（如果有）
+        # 音标覆盖项
         if data.get('phonetic'):
             ctk.CTkLabel(
-                header,
-                text=f"  {data['phonetic']}",
-                font=("Microsoft YaHei UI", 11),
-                text_color="gray"
-            ).pack(side="left", padx=10)
+                header, text=f"/{data['phonetic']}/", 
+                font=("Arial", 11), text_color="gray"
+            ).pack(side="left", padx=15)
 
         # 内容区域
         content_frame = ctk.CTkFrame(block, fg_color="transparent")
-        content_frame.pack(fill="x", padx=15, pady=(0, 10))
+        content_frame.pack(fill="x", padx=15, pady=(0, 15))
 
-        # 释义
+        # 释义区域 (Selectable Textbox with hidden scrollbar)
         if data.get('meaning'):
-            meaning_box = ctk.CTkTextbox(
-                content_frame,
-                height=80,
-                font=("Microsoft YaHei UI", 12),
-                fg_color=("white", "#1E1E1E"),
-                corner_radius=5
-            )
-            meaning_box.pack(fill="x", pady=(5, 5))
-            meaning_box.insert("0.0", data['meaning'])
-            meaning_box.configure(state="disabled")
-            self.bind_context_menu(meaning_box)
+            m_text = data['meaning'].strip()
+            self.create_selectable_text(content_frame, m_text, 12, 42).pack(fill="x", pady=5, padx=2)
 
-        # 词形变化（Bing特有）
-        if data.get('forms'):
-            forms_frame = ctk.CTkFrame(content_frame, fg_color="transparent")
-            forms_frame.pack(fill="x", pady=2)
-            ctk.CTkLabel(
-                forms_frame,
-                text="📐 词形:",
-                font=("Microsoft YaHei UI", 11),
-                text_color="gray60"
-            ).pack(side="left")
-            ctk.CTkLabel(
-                forms_frame,
-                text=data['forms'],
-                font=("Microsoft YaHei UI", 11),
-                wraplength=500
-            ).pack(side="left", padx=5)
-
-        # 例句
+        # 例句 (Selectable Textbox)
         if data.get('example'):
-            example_frame = ctk.CTkFrame(content_frame, fg_color="transparent")
-            example_frame.pack(fill="x", pady=2)
+            ex_frame = ctk.CTkFrame(content_frame, fg_color="transparent")
+            ex_frame.pack(fill="x", pady=4)
+            
             ctk.CTkLabel(
-                example_frame,
-                text="💬 例句:",
-                font=("Microsoft YaHei UI", 11),
-                text_color="gray60"
+                ex_frame, text="💬 典型用例:", font=("Microsoft YaHei UI", 11, "bold"), 
+                text_color="gray50"
             ).pack(anchor="w")
-            example_label = ctk.CTkLabel(
-                example_frame,
-                text=data['example'],
-                font=("Microsoft YaHei UI", 11),
-                wraplength=550,
-                justify="left"
-            )
-            example_label.pack(anchor="w", padx=10)
+            
+            ex_text = data['example'].strip()
+            self.create_selectable_text(ex_frame, ex_text, 12, 48).pack(fill="x", padx=10, pady=2)
 
-        # 搭配短语（Bing特有）
-        if data.get('collocations'):
-            coll_frame = ctk.CTkFrame(content_frame, fg_color="transparent")
-            coll_frame.pack(fill="x", pady=2)
-            ctk.CTkLabel(
-                coll_frame,
-                text="🔗 常用搭配:",
-                font=("Microsoft YaHei UI", 11),
-                text_color="gray60"
-            ).pack(side="left")
-            ctk.CTkLabel(
-                coll_frame,
-                text=data['collocations'],
-                font=("Microsoft YaHei UI", 11),
-                wraplength=450
-            ).pack(side="left", padx=5)
-
-        # 同义词
-        if data.get('synonyms'):
-            syn_frame = ctk.CTkFrame(content_frame, fg_color="transparent")
-            syn_frame.pack(fill="x", pady=2)
-            ctk.CTkLabel(
-                syn_frame,
-                text="🔀 同义词:",
-                font=("Microsoft YaHei UI", 11),
-                text_color="gray60"
-            ).pack(side="left")
-            ctk.CTkLabel(
-                syn_frame,
-                text=data['synonyms'],
-                font=("Microsoft YaHei UI", 11),
-                wraplength=450
-            ).pack(side="left", padx=5)
+        # 其他元数据 (Selectable)
+        meta_parts = []
+        if data.get('forms'): meta_parts.append(f"形态: {data['forms']}")
+        if data.get('collocations'): meta_parts.append(f"搭配: {data['collocations']}")
+        if data.get('synonyms'): meta_parts.append(f"近义: {data['synonyms']}")
+        
+        if meta_parts:
+            meta_text = "  •  ".join(meta_parts)
+            self.create_selectable_text(content_frame, meta_text, 11, 55, color="gray60").pack(fill="x", pady=(5, 0), padx=5)
 
         # 存储引用
         self.multi_dict_frames[source] = {

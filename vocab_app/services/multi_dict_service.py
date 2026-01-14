@@ -62,20 +62,27 @@ class MultiDictService:
             # 获取前 3 个释义块
             def_blocks = soup.find_all('div', class_='def-block', limit=3)
             
+            def _get_clean_text(el):
+                if not el: return ""
+                # Use a unique separator to ensure we can deal with weird nesting
+                t = el.get_text(separator=' ', strip=True)
+                import re
+                # Sometimes words still stick together if they were joined across sibling nodes without spaces
+                # This is a safety cleanup
+                return re.sub(r'\s+', ' ', t).strip()
+
             for block in def_blocks:
                 # 英文释义 (ddef_h -> def)
                 ddef_h = block.find('div', class_='ddef_h')
                 eng_def = ""
                 if ddef_h:
                     def_text = ddef_h.find('div', class_='def')
-                    if def_text:
-                        eng_def = def_text.get_text(separator=' ', strip=True)
+                    eng_def = _get_clean_text(def_text)
 
                 # 中文释义 (def-body -> trans)
                 chn_def = ""
                 trans = block.find('span', class_='trans')
-                if trans:
-                    chn_def = trans.get_text(separator=' ', strip=True)
+                chn_def = _get_clean_text(trans)
 
                 if eng_def or chn_def:
                     m_text = f"{eng_def} {chn_def}".strip()
@@ -85,15 +92,14 @@ class MultiDictService:
                 examps = block.find_all('div', class_='examp', limit=2)
                 for ex in examps:
                     eg = ex.find('span', class_='eg')
-                    trans = ex.find('span', class_='trans')
-                    if eg and trans:
-                        # Fix: use separator=' ' to avoid "thebank"
-                        eg_text = eg.get_text(separator=' ', strip=True)
-                        trans_text = trans.get_text(separator=' ', strip=True)
-                        examples.append(f"{eg_text}\n{trans_text}")
-                    elif eg:
-                        eg_text = eg.get_text(separator=' ', strip=True)
-                        examples.append(eg_text)
+                    eg_trans = ex.find('span', class_='trans')
+                    if eg:
+                        eg_text = _get_clean_text(eg)
+                        trans_text = _get_clean_text(eg_trans)
+                        if trans_text:
+                            examples.append(f"{eg_text}\n{trans_text}")
+                        else:
+                            examples.append(eg_text)
 
             meaning = "\n".join([f"• {m}" for m in meanings])
             example = "\n".join(examples[:3]) # 限制例句数量

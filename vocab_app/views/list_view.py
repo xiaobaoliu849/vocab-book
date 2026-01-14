@@ -1,8 +1,11 @@
 import customtkinter as ctk
 import tkinter as tk
 from tkinter import messagebox
+import re
+import time
 from datetime import datetime
 from .base_view import BaseView
+from ..config import FONT_NORMAL, FONT_BOLD, FONT_LARGE
 
 class ListView(BaseView):
     def setup_ui(self):
@@ -17,53 +20,67 @@ class ListView(BaseView):
         self.status_filter = "全部"
         self.list_search_timer = None
         self.selected_words = set() # Store selected words (by word string)
+        self._last_detail_open_time = 0 # Debounce for DetailWindow
 
         # Toolbar
         toolbar_frame = ctk.CTkFrame(self, fg_color="transparent")
         toolbar_frame.pack(fill="x", padx=5, pady=(0, 10))
 
-        # Search
+        # --- Search Box ---
+        search_frame = ctk.CTkFrame(toolbar_frame, fg_color=("gray95", "#242424"), corner_radius=20, height=40)
+        search_frame.pack(side="left", padx=(0, 10))
+        search_frame.pack_propagate(False)
+
+        search_icon = ctk.CTkLabel(search_frame, text="🔍", font=("Arial", 14))
+        search_icon.pack(side="left", padx=(12, 5))
+
         self.list_search_entry = ctk.CTkEntry(
-            toolbar_frame, placeholder_text="🔍 搜索单词...", width=200, height=38, font=("Microsoft YaHei UI", 14)
+            search_frame, placeholder_text="搜索单词...", border_width=0, 
+            fg_color="transparent", width=180, font=("Microsoft YaHei UI", 13)
         )
-        self.list_search_entry.pack(side="left", padx=(0, 8))
+        self.list_search_entry.pack(side="left", fill="y")
         self.list_search_entry.bind("<KeyRelease>", self.on_list_search_input)
         self.list_search_entry.bind("<Return>", lambda e: self.execute_list_search())
 
         self.btn_clear_search = ctk.CTkButton(
-            toolbar_frame, text="✕", width=38, height=38,
-            fg_color="transparent", text_color="gray", hover_color=("gray90", "gray25"),
+            search_frame, text="✕", width=28, height=28, corner_radius=14,
+            fg_color="transparent", text_color="gray", hover_color=("gray85", "gray30"),
             command=self.clear_list_search
         )
-        self.btn_clear_search.pack(side="left", padx=(0, 15))
+        self.btn_clear_search.pack(side="right", padx=5)
 
-        # Filter
+        # --- Filter Pill ---
         self.filter_options = ["全部", "待复习", "已掌握", "新单词", "学习中"]
         self.filter_dropdown = ctk.CTkOptionMenu(
-            toolbar_frame, values=self.filter_options, width=110, height=38,
-            font=("Microsoft YaHei UI", 13), command=self.on_filter_change
+            toolbar_frame, values=self.filter_options, width=100, height=36, corner_radius=18,
+            font=("Microsoft YaHei UI", 12), command=self.on_filter_change,
+            fg_color=("#3B8ED0", "#1f538d"), button_color=("#3B8ED0", "#1f538d"),
+            button_hover_color=("#3677ad", "#1a4675")
         )
         self.filter_dropdown.set("全部")
         self.filter_dropdown.pack(side="left", padx=(0, 15))
 
-        # Batch Actions
+        # --- Batch Actions ---
+        batch_frame = ctk.CTkFrame(toolbar_frame, fg_color="transparent")
+        batch_frame.pack(side="left")
+
         self.btn_batch_master = ctk.CTkButton(
-            toolbar_frame, text="✅ 标为已掌握", width=110, height=38,
-            fg_color="#4CAF50", hover_color="#388E3C",
+            batch_frame, text="✅ 掌握", width=80, height=36, corner_radius=18,
+            fg_color="#4CAF50", hover_color="#388E3C", font=("Microsoft YaHei UI", 12, "bold"),
             command=self.batch_mark_mastered
         )
         self.btn_batch_master.pack(side="left", padx=(0, 5))
 
         self.btn_batch_export = ctk.CTkButton(
-            toolbar_frame, text="📤 导出选中", width=100, height=38,
-            fg_color="#2196F3", hover_color="#1976D2",
+            batch_frame, text="📤 导出", width=80, height=36, corner_radius=18,
+            fg_color="#2196F3", hover_color="#1976D2", font=("Microsoft YaHei UI", 12, "bold"),
             command=self.batch_export
         )
         self.btn_batch_export.pack(side="left", padx=(0, 5))
 
         self.btn_batch_del = ctk.CTkButton(
-            toolbar_frame, text="🗑️ 批量删除", width=100, height=38,
-            fg_color="#F44336", hover_color="#D32F2F",
+            batch_frame, text="🗑️ 删除", width=80, height=36, corner_radius=18,
+            fg_color="#F44336", hover_color="#D32F2F", font=("Microsoft YaHei UI", 12, "bold"),
             command=self.batch_delete
         )
         self.btn_batch_del.pack(side="left")
@@ -73,11 +90,13 @@ class ListView(BaseView):
         )
         self.lbl_results_count.pack(side="right", padx=10)
 
-        # List Area
+        # --- List Area ---
         self.list_scroll = ctk.CTkScrollableFrame(
-            self, label_text="单词列表", label_font=("Microsoft YaHei UI", 14, "bold")
+            self, label_text="单词列表", 
+            label_font=("Microsoft YaHei UI", 14, "bold"),
+            fg_color="transparent", label_fg_color="transparent"
         )
-        self.list_scroll.pack(fill="both", expand=True)
+        self.list_scroll.pack(fill="both", expand=True, pady=(5, 0))
 
         # Widget Pool
         self.row_pool = []
@@ -100,73 +119,101 @@ class ListView(BaseView):
         self.current_context_item = None
 
     def create_row_widget(self):
-        row_frame = ctk.CTkFrame(self.list_scroll, fg_color="transparent")
-
-        # Checkbox
-        checkbox = ctk.CTkCheckBox(row_frame, text="", width=24, height=24, command=None)
-        checkbox.pack(side="left", padx=(5, 5))
-
-        status_label = ctk.CTkLabel(row_frame, text="", width=70, font=("Arial", 12, "bold"))
-        status_label.pack(side="left")
-
-        # Word container (Frame with click events to simulate button)
-        content_btn = ctk.CTkFrame(
-            row_frame, fg_color="transparent", corner_radius=6, cursor="hand2", height=40
+        # Card container
+        card = ctk.CTkFrame(
+            self.list_scroll, fg_color=("white", "#2b2b2b"), corner_radius=16, 
+            border_width=1, border_color=("gray90", "gray30")
         )
-        content_btn.pack(side="left", fill="x", expand=True, padx=5)
+        card.grid_columnconfigure(1, weight=1) # Main content expands
 
-        # Labels inside content frame
-        row_content = ctk.CTkFrame(content_btn, fg_color="transparent")
-        row_content.pack(fill="both", expand=True, padx=5)
+        # Checkbox (Strict position)
+        checkbox = ctk.CTkCheckBox(card, text="", width=20, height=20, corner_radius=6)
+        checkbox.grid(row=0, column=0, padx=(15, 10), sticky="w", pady=15)
 
-        word_label = ctk.CTkLabel(row_content, text="", font=("Microsoft YaHei UI", 15, "bold"), anchor="w")
+        # Content area (Clickable)
+        content_btn = ctk.CTkFrame(card, fg_color="transparent", cursor="hand2")
+        content_btn.grid(row=0, column=1, sticky="nsew", pady=10)
+        content_btn.grid_columnconfigure(0, weight=1)
+
+        # Header: Word + Level Badge
+        header_container = ctk.CTkFrame(content_btn, fg_color="transparent")
+        header_container.grid(row=0, column=0, sticky="ew")
+
+        word_label = ctk.CTkLabel(header_container, text="", font=("Microsoft YaHei UI", 16, "bold"), anchor="w")
         word_label.pack(side="left")
 
-        phonetic_label = ctk.CTkLabel(row_content, text="", font=("Arial", 12), text_color="gray", anchor="w")
-        phonetic_label.pack(side="left", padx=10)
+        status_label = ctk.CTkLabel(
+            header_container, text="", font=("Microsoft YaHei UI", 10, "bold"), 
+            height=20, corner_radius=10, width=60
+        )
+        status_label.pack(side="left", padx=10)
 
-        meaning_label = ctk.CTkLabel(row_content, text="", font=("Microsoft YaHei UI", 13), text_color=("gray40", "gray60"), anchor="w")
-        meaning_label.pack(side="left", padx=10, fill="x", expand=True)
+        phonetic_label = ctk.CTkLabel(header_container, text="", font=("Arial", 12), text_color="gray", anchor="w")
+        phonetic_label.pack(side="left")
+
+        # Multiline Meaning
+        meaning_label = ctk.CTkLabel(
+            content_btn, text="", font=("Microsoft YaHei UI", 12), 
+            text_color=("gray30", "gray70"), anchor="w", justify="left",
+            wraplength=600 # Wider wrap
+        )
+        meaning_label.grid(row=1, column=0, sticky="w", pady=(2, 0))
+
+        # Actions frame (Sticky right)
+        actions_frame = ctk.CTkFrame(card, fg_color="transparent")
+        actions_frame.grid(row=0, column=2, padx=(5, 15), sticky="e")
+
+        # Subtle Style: Low contrast by default, bright on hover
+        play_btn = ctk.CTkButton(
+            actions_frame, text="▶", width=30, height=30, corner_radius=15, 
+            fg_color=("gray92", "gray28"), text_color=("#4CAF50", "#A5D6A7"),
+            hover_color=("#4CAF50", "#2E7D32"), border_width=0,
+            font=("Arial", 12, "bold")
+        )
+        play_btn.pack(side="left", padx=3)
+
+        delete_btn = ctk.CTkButton(
+            actions_frame, text="×", width=30, height=30, corner_radius=15, 
+            fg_color=("gray92", "gray28"), text_color=("#F44336", "#EF9A9A"),
+            hover_color=("#F44336", "#C62828"), border_width=0,
+            font=("Arial", 14, "bold")
+        )
+        delete_btn.pack(side="left", padx=3)
+
+        def set_actions_visibility(active):
+            if active:
+                play_btn.configure(fg_color=("#4CAF50", "#2E7D32"), text_color="white")
+                delete_btn.configure(fg_color=("#F44336", "#C62828"), text_color="white")
+            else:
+                play_btn.configure(fg_color=("gray92", "gray28"), text_color=("#4CAF50", "#A5D6A7"))
+                delete_btn.configure(fg_color=("gray92", "gray28"), text_color=("#F44336", "#EF9A9A"))
 
         # Hover and Click effects
-        def on_enter(e, f=content_btn):
-            f.configure(fg_color=("gray90", "gray25"))
-        def on_leave(e, f=content_btn):
-            f.configure(fg_color="transparent")
+        def on_enter(e, c=card):
+            c.configure(border_color=("#3B8ED0", "#1f538d"), fg_color=("gray98", "#323232"))
+            set_actions_visibility(True)
+        def on_leave(e, c=card):
+            c.configure(border_color=("gray90", "gray30"), fg_color=("white", "#2b2b2b"))
+            set_actions_visibility(False)
 
-        content_btn.bind("<Enter>", on_enter)
-        content_btn.bind("<Leave>", on_leave)
+        card.bind("<Enter>", on_enter)
+        card.bind("<Leave>", on_leave)
 
-        # Bind click for all children to main frame handler
         def bind_click_recursive(widget, handler):
-            widget.bind("<Button-1>", handler)
-            for child in widget.winfo_children():
-                bind_click_recursive(child, handler)
+            # Don't bind to buttons or checkbox
+            if widget not in [play_btn, delete_btn, checkbox]:
+                widget.bind("<Button-1>", handler)
+                for child in widget.winfo_children():
+                    bind_click_recursive(child, handler)
 
         self._bind_click = bind_click_recursive
 
-        play_btn = ctk.CTkButton(
-            row_frame, text="🔊", width=35, height=30, fg_color="transparent", text_color="green",
-            hover_color=("gray90", "gray25"), border_width=1, border_color="green"
-        )
-        play_btn.pack(side="left", padx=2)
-
-        delete_btn = ctk.CTkButton(
-            row_frame, text="🗑️", width=35, height=30, fg_color="transparent", text_color="red",
-            hover_color=("gray90", "gray25"), border_width=1, border_color="red"
-        )
-        delete_btn.pack(side="left", padx=2)
-
         return {
-            'frame': row_frame,
-            'checkbox': checkbox,
-            'status': status_label,
-            'content_btn': content_btn,
-            'word_lbl': word_label,
-            'phonetic_lbl': phonetic_label,
-            'meaning_lbl': meaning_label,
-            'play_btn': play_btn,
-            'delete_btn': delete_btn
+            'frame': card, 'checkbox': checkbox, 'status': status_label,
+            'content_btn': content_btn, 'word_lbl': word_label,
+            'phonetic_lbl': phonetic_label, 'meaning_lbl': meaning_label,
+            'play_btn': play_btn, 'delete_btn': delete_btn,
+            'actions_frame': actions_frame
         }
 
     def update_row_widget(self, row, item, now_ts):
@@ -183,34 +230,45 @@ class ListView(BaseView):
 
         # Determine status icon and color
         if item.get('mastered'):
-            status_icon, color = "🏆", "green"
+            status_text, bg_color = "掌握", ("#E8F5E9", "#1B5E20")
+            text_color = ("#2E7D32", "#A5D6A7")
         elif next_time == 0:
-            status_icon, color = "🆕", "gray"
+            status_text, bg_color = "新词", ("#F5F5F5", "#424242")
+            text_color = ("#616161", "#BDBDBD")
         elif next_time <= now_ts:
-            status_icon, color = "🔴", "red"
+            status_text, bg_color = "到期", ("#FFEBEE", "#B71C1C")
+            text_color = ("#C62828", "#EF9A9A")
         else:
-            status_icon, color = "🟢", "blue"
+            status_text, bg_color = "学习", ("#E3F2FD", "#0D47A1")
+            text_color = ("#1565C0", "#90CAF9")
 
-        row['status'].configure(text=f"{status_icon} Lv.{stage}", text_color=color)
+        row['status'].configure(
+            text=f"{status_text} Lv.{stage}", 
+            fg_color=bg_color, 
+            text_color=text_color
+        )
 
-        # Update labels instead of one big button text
+        # Update labels
         row['word_lbl'].configure(text=item['word'])
 
         phonetic = item.get('phonetic', '')
         tags = item.get('tags', '')
-        # Truncate tags if too long
-        if tags and len(tags) > 15:
-            tags = tags[:12] + "..."
+        if tags and len(tags) > 20:
+            tags = tags[:17] + "..."
 
-        phonetic_text = f"{phonetic} [{tags}]" if tags else phonetic
+        phonetic_text = f"/{phonetic}/  [{tags}]" if tags else f"/{phonetic}/" if phonetic else ""
         row['phonetic_lbl'].configure(text=phonetic_text)
 
-        # Meaning truncation
-        meaning_lines = item.get('meaning', '').splitlines()
-        first_meaning = meaning_lines[0] if meaning_lines else ""
-        if len(first_meaning) > 25:
-            first_meaning = first_meaning[:25] + "..."
-        row['meaning_lbl'].configure(text=first_meaning)
+        # Meaning truncation & formatting (Multiline Support)
+        meaning = item.get('meaning', '').strip()
+        meaning = re.sub(r'\n+', '\n', meaning) # Collapse multiple newlines
+        lines = meaning.split('\n')
+        if len(lines) > 3:
+            meaning = '\n'.join(lines[:3]).strip() + "..."
+        elif len(meaning) > 200: # Character limit safeguard
+            meaning = meaning[:197] + "..."
+            
+        row['meaning_lbl'].configure(text=meaning)
 
         # Setup main button command
         def on_row_click(e, x=item):
@@ -373,7 +431,23 @@ class ListView(BaseView):
 
     def view_word_detail(self, item):
         from .detail_window import DetailWindow
-        DetailWindow(self.controller, item, self.controller)
+        
+        # Debounce: prevent multiple windows from opening on rapid clicks
+        now = time.time()
+        if now - self._last_detail_open_time < 0.6: # 600ms threshold
+            return
+        self._last_detail_open_time = now
+        
+        # Pass the current filtered list and the index of this item
+        try:
+            current_index = self.filtered_vocab_list.index(item)
+            items_list = self.filtered_vocab_list
+        except (AttributeError, ValueError):
+            # Fallback if list not found or item not in current filter
+            items_list = [item]
+            current_index = 0
+            
+        DetailWindow(self.controller, item, self.controller, items_list=items_list, current_index=current_index)
 
     def delete_word(self, word):
         if messagebox.askyesno("删除确认", f"确定要删除单词 \"{word}\" 吗？\n\n此操作不可撤销。"):
@@ -487,16 +561,15 @@ class ListView(BaseView):
             row['frame'].pack_forget()
 
         if not self.filtered_vocab_list:
+            for row in self.row_pool: row['frame'].pack_forget()
             if self.row_pool:
-                self.row_pool[0]['checkbox'].pack_forget() # Hide checkbox for empty msg
-                self.row_pool[0]['status'].configure(text="", text_color="gray")
-                self.row_pool[0]['content_btn'].configure(fg_color=("gray90", "gray25"))
-                self.row_pool[0]['word_lbl'].configure(text="空空如也，快去添加单词吧！")
-                self.row_pool[0]['phonetic_lbl'].configure(text="")
-                self.row_pool[0]['meaning_lbl'].configure(text="")
-                self.row_pool[0]['play_btn'].pack_forget()
-                self.row_pool[0]['delete_btn'].pack_forget()
-                self.row_pool[0]['frame'].pack(fill="x", pady=20, padx=5)
+                empty_row = self.row_pool[0]
+                empty_row['checkbox'].grid_forget()
+                empty_row['status'].master.grid_forget()
+                empty_row['actions_frame'].grid_forget()
+                empty_row['status'].configure(text="", fg_color="transparent")
+                empty_row['frame'].configure(border_width=0, fg_color="transparent")
+                empty_row['frame'].pack(fill="x", pady=100)
             return
 
         start_idx = (self.current_page - 1) * self.page_size
@@ -510,11 +583,12 @@ class ListView(BaseView):
 
         for i, item in enumerate(page_items):
             row = self.row_pool[i]
-            row['checkbox'].pack(side="left", padx=(5, 5)) # Show checkbox
-            row['play_btn'].pack(side="left", padx=2)
-            row['delete_btn'].pack(side="left", padx=2)
+            row['frame'].configure(border_width=1, fg_color=("white", "#2b2b2b")) 
+            row['checkbox'].grid(row=0, column=0, padx=(15, 10), sticky="w")
+            row['status'].master.grid(row=0, column=0, sticky="ew")
+            row['actions_frame'].grid(row=0, column=2, padx=(5, 15), sticky="e")
             self.update_row_widget(row, item, now_ts)
-            row['frame'].pack(fill="x", pady=2, padx=5)
+            row['frame'].pack(fill="x", pady=6, padx=15)
 
         try:
             self.list_scroll._parent_canvas.yview_moveto(0)
@@ -523,10 +597,19 @@ class ListView(BaseView):
 
     def update_pagination_controls(self):
         self.lbl_page_info.configure(text=f"第 {self.current_page} / {self.total_pages} 页")
-        self.btn_prev.configure(state="normal" if self.current_page > 1 else "disabled",
-                               fg_color=ctk.ThemeManager.theme["CTkButton"]["fg_color"] if self.current_page > 1 else "gray")
-        self.btn_next.configure(state="normal" if self.current_page < self.total_pages else "disabled",
-                               fg_color=ctk.ThemeManager.theme["CTkButton"]["fg_color"] if self.current_page < self.total_pages else "gray")
+        
+        # Primary color for active, gray for disabled
+        btn_color = ("#3B8ED0", "#1f538d")
+        
+        if self.current_page > 1:
+            self.btn_prev.configure(state="normal", fg_color=btn_color)
+        else:
+            self.btn_prev.configure(state="disabled", fg_color=("gray90", "gray30"))
+            
+        if self.current_page < self.total_pages:
+            self.btn_next.configure(state="normal", fg_color=btn_color)
+        else:
+            self.btn_next.configure(state="disabled", fg_color=("gray90", "gray30"))
 
     def go_prev_page(self):
         if self.current_page > 1:

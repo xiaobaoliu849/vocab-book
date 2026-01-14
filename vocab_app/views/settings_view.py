@@ -71,18 +71,26 @@ class SettingsView(BaseView):
         ]
 
         for cat_id, text in categories:
+            btn_container = ctk.CTkFrame(self.sidebar_frame, fg_color="transparent")
+            btn_container.pack(fill="x", pady=2)
+            
+            indicator = ctk.CTkFrame(btn_container, width=3, height=28, corner_radius=2, fg_color="transparent")
+            indicator.pack(side="left", padx=(1, 0))
+
             btn = ctk.CTkButton(
-                self.sidebar_frame,
+                btn_container,
                 text=text,
-                height=45,
+                height=40,
                 anchor="w",
-                font=("Microsoft YaHei UI", 14),
+                font=("Microsoft YaHei UI", 13),
                 fg_color="transparent",
                 text_color=("gray20", "gray80"),
                 hover_color=("gray85", "#333333"),
                 command=lambda c=cat_id: self.switch_category(c)
             )
-            btn.pack(fill="x", padx=10, pady=2)
+            btn.pack(side="left", fill="x", expand=True, padx=(5, 10))
+            
+            btn.indicator = indicator # Store ref
             self.category_buttons[cat_id] = btn
 
     def switch_category(self, category_name):
@@ -94,8 +102,10 @@ class SettingsView(BaseView):
         for cat_id, btn in self.category_buttons.items():
             if cat_id == category_name:
                 btn.configure(fg_color=("gray85", "#333333"), text_color=("#3B8ED0", "#3B8ED0"))
+                btn.indicator.configure(fg_color="#3B8ED0")
             else:
                 btn.configure(fg_color="transparent", text_color=("gray20", "gray80"))
+                btn.indicator.configure(fg_color="transparent")
 
         self.current_category = category_name
 
@@ -310,7 +320,7 @@ class SettingsView(BaseView):
         ctk.CTkLabel(card, text="应用内快捷键 (固定)", font=("Microsoft YaHei UI", 13, "bold"), anchor="w").pack(fill="x", padx=20, pady=(10, 8))
 
         shortcuts = [
-            ("Ctrl + N", "📝 记单词 (Add Page)"),
+            ("Ctrl + N", "🏠 词汇中心 (Vocab Center)"),
             ("Ctrl + L", "📚 单词列表 (List Page)"),
             ("Ctrl + R", "🧠 智能复习 (Review Page)"),
             ("Ctrl + S", "⚙️ 设置 (Settings Page)")

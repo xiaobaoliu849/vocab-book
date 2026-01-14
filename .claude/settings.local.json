@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(dir:*)",
+      "Bash(pip show:*)",
+      "Bash(pip install:*)",
+      "Bash(D:\\\\conda\\\\python.exe -m pip install:*)",
+      "Bash(timeout 5 python:*)",
+      "Bash(timeout:*)",
+      "Bash(ping:*)",
+      "Bash(del:*)",
+      "Bash(claude:*)",
+      "WebSearch",
+      "Bash(curl:*)",
+      "Bash(install.cmd)",
+      "Bash(cmd.exe:*)",
+      "Bash(powershell:*)",
+      "Bash(git config:*)",
+      "Bash(git config user.email \"vocab@example.com\")",
+      "Bash(where:*)",
+      "Bash(git remote add:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git branch:*)",
+      "Bash(git push:*)",
+      "Bash(pyinstaller:*)",
+      "Bash(cmd:*)",
+      "Bash(git -C \"D:\\\\Projects\\\\生词本\" status)",
+      "Bash(git -C \"D:\\\\Projects\\\\生词本\" restore vocab_app/main.py)"
+    ]
+  }
+}

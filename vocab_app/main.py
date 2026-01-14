@@ -44,7 +44,7 @@ class VocabApp(ctk.CTk):
 
         # Window setup
         word_count = len(self.vocab_list)
-        self.title(f"我的智能生词本 v{APP_VERSION} (Modular) - {word_count} 个单词")
+        self.title(f"智能生词本 v{APP_VERSION} - {word_count} 个单词")
         self.geometry("1000x800")
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
@@ -108,24 +108,114 @@ class VocabApp(ctk.CTk):
         self.bind("<Control-s>", lambda e: self.show_frame("settings"))
 
     def setup_sidebar(self):
-        self.sidebar_frame = ctk.CTkFrame(self, width=160, corner_radius=0)
+        self.is_sidebar_collapsed = self.config.get("sidebar_collapsed", False)
+        self.sidebar_width_full = 180
+        self.sidebar_width_collapsed = 70
+        
+        # Sidebar Frame
+        self.sidebar_frame = ctk.CTkFrame(self, width=self.sidebar_width_full if not self.is_sidebar_collapsed else self.sidebar_width_collapsed, corner_radius=0, fg_color=("#f0f0f0", "#1a1a1a"))
         self.sidebar_frame.grid(row=0, column=0, rowspan=4, sticky="nsew")
-        self.sidebar_frame.grid_rowconfigure(5, weight=1)
+        self.sidebar_frame.grid_propagate(False)
+        self.sidebar_frame.grid_rowconfigure(6, weight=1) # Spacer for bottom settings
 
-        self.logo_label = ctk.CTkLabel(self.sidebar_frame, text="📖 生词本", font=ctk.CTkFont(size=22, weight="bold"))
-        self.logo_label.grid(row=0, column=0, padx=20, pady=(30, 20))
+        # 1. Collapse Toggle & Logo
+        self.logo_frame = ctk.CTkFrame(self.sidebar_frame, fg_color="transparent")
+        self.logo_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=(25, 20))
+        
+        self.btn_collapse = ctk.CTkButton(self.logo_frame, text="≡", width=35, height=35, fg_color="transparent", text_color=("gray20", "gray80"), hover_color=("gray85", "gray25"), font=("Arial", 20, "bold"), command=self.toggle_sidebar)
+        self.btn_collapse.pack(side="left")
 
-        self.btn_add = ctk.CTkButton(self.sidebar_frame, text="📝 记单词", command=lambda: self.show_frame("add"))
-        self.btn_add.grid(row=1, column=0, padx=20, pady=10)
+        self.logo_label = ctk.CTkLabel(self.logo_frame, text="智能生词本", font=ctk.CTkFont(size=20, weight="bold"))
+        if not self.is_sidebar_collapsed:
+            self.logo_label.pack(side="left", padx=10)
 
-        self.btn_list = ctk.CTkButton(self.sidebar_frame, text="📚 单词列表", command=lambda: self.show_frame("list"))
-        self.btn_list.grid(row=2, column=0, padx=20, pady=10)
+        # 2. Navigation Buttons
+        self.nav_buttons = {}
+        nav_items = [
+            ("add", "🏠", "词汇中心"),
+            ("list", "📚", "单词列表"),
+            ("review", "🧠", "智能复习")
+        ]
 
-        self.btn_review = ctk.CTkButton(self.sidebar_frame, text="🧠 智能复习", command=lambda: self.show_frame("review"))
-        self.btn_review.grid(row=3, column=0, padx=20, pady=10)
+        for i, (name, icon, label) in enumerate(nav_items):
+            btn = self._create_nav_button(name, icon, label, i + 1)
+            self.nav_buttons[name] = btn
 
-        self.btn_settings = ctk.CTkButton(self.sidebar_frame, text="⚙️ 设置", fg_color="gray", hover_color="gray30", command=lambda: self.show_frame("settings"))
-        self.btn_settings.grid(row=4, column=0, padx=20, pady=10)
+        # 3. Settings at bottom
+        self.btn_settings = self._create_nav_button("settings", "⚙️", "设置", i + 7) # Use i+7 to put at bottom
+        self.nav_buttons["settings"] = self.btn_settings
+
+        if self.is_sidebar_collapsed:
+            self.collapse_sidebar_ui()
+
+    def _create_nav_button(self, name, icon, label, row):
+        # Activity indicator (Left blue bar)
+        indicator = ctk.CTkFrame(self.sidebar_frame, width=4, height=32, corner_radius=2, fg_color="transparent")
+        indicator.grid(row=row, column=0, sticky="w", padx=(1, 0), pady=8)
+        
+        btn = ctk.CTkButton(
+            self.sidebar_frame, 
+            text=f"{icon}   {label}" if not self.is_sidebar_collapsed else icon,
+            width=self.sidebar_width_full-20 if not self.is_sidebar_collapsed else 45,
+            height=45,
+            corner_radius=8,
+            anchor="w" if not self.is_sidebar_collapsed else "center",
+            fg_color="transparent",
+            text_color=("gray20", "gray80"),
+            hover_color=("gray85", "gray25"),
+            font=("Microsoft YaHei UI", 14),
+            command=lambda n=name: self.show_frame(n)
+        )
+        btn.grid(row=row, column=0, padx=(10 if not self.is_sidebar_collapsed else 12, 10), pady=8)
+        
+        btn.indicator = indicator # Store ref
+        btn.full_text = f"{icon}   {label}"
+        btn.icon_only = icon
+        return btn
+
+    def toggle_sidebar(self):
+        self.is_sidebar_collapsed = not self.is_sidebar_collapsed
+        self.config["sidebar_collapsed"] = self.is_sidebar_collapsed
+        save_config(self.config)
+        
+        if self.is_sidebar_collapsed:
+            self.collapse_sidebar_ui()
+        else:
+            self.expand_sidebar_ui()
+
+    def collapse_sidebar_ui(self):
+        self.sidebar_frame.configure(width=self.sidebar_width_collapsed)
+        self.logo_label.pack_forget()
+        for name, btn in self.nav_buttons.items():
+            btn.configure(text=btn.icon_only, width=45, anchor="center")
+            btn.grid_configure(padx=(12, 10))
+
+    def expand_sidebar_ui(self):
+        self.sidebar_frame.configure(width=self.sidebar_width_full)
+        self.logo_label.pack(side="left", padx=10)
+        for name, btn in self.nav_buttons.items():
+            btn.configure(text=btn.full_text, width=self.sidebar_width_full-20, anchor="w")
+            btn.grid_configure(padx=(10, 10))
+
+    def show_frame(self, name):
+        # Hide all frames
+        for frame in self.frames.values():
+            frame.pack_forget()
+
+        # Update button styles/indicators
+        for btn_name, btn in self.nav_buttons.items():
+            if btn_name == name:
+                btn.configure(fg_color=("gray85", "gray25"), text_color=("#3B8ED0", "#3B8ED0"))
+                btn.indicator.configure(fg_color="#3B8ED0")
+            else:
+                btn.configure(fg_color="transparent", text_color=("gray20", "gray80"))
+                btn.indicator.configure(fg_color="transparent")
+
+        # Show selected frame
+        view = self.frames[name]
+        view.pack(fill="both", expand=True)
+        if hasattr(view, 'on_show'):
+            view.on_show()
 
     def reload_vocab_list(self):
         try:
@@ -137,18 +227,7 @@ class VocabApp(ctk.CTk):
 
     def update_title(self):
         word_count = len(self.vocab_list)
-        self.title(f"我的智能生词本 v{APP_VERSION} (Modular) - {word_count} 个单词")
-
-    def show_frame(self, name):
-        # Hide all frames
-        for frame in self.frames.values():
-            frame.pack_forget()
-
-        # Show selected frame
-        view = self.frames[name]
-        view.pack(fill="both", expand=True)
-        if hasattr(view, 'on_show'):
-            view.on_show()
+        self.title(f"智能生词本 v{APP_VERSION} - {word_count} 个单词")
 
     def setup_hotkey(self):
         try:

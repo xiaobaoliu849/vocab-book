@@ -28,14 +28,14 @@ class AddView(BaseView):
         top_frame = ctk.CTkFrame(self, fg_color="transparent")
         top_frame.grid(row=0, column=0, sticky="ew", pady=(20, 10), padx=5)
 
-        self.entry_word = ctk.CTkEntry(top_frame, placeholder_text="输入单词...", width=400, height=50, font=("Microsoft YaHei UI", 16))
+        self.entry_word = ctk.CTkEntry(top_frame, placeholder_text="输入单词...", width=400, height=45, font=("Microsoft YaHei UI", 15))
         self.entry_word.pack(side="left", padx=(0, 15))
         self.entry_word.bind("<Return>", lambda event: self.start_search())
 
-        self.btn_search = ctk.CTkButton(top_frame, text="🔍 查询", width=100, height=50, font=("Microsoft YaHei UI", 15, "bold"), command=self.start_search)
+        self.btn_search = ctk.CTkButton(top_frame, text="🔍 查询", width=90, height=45, font=("Microsoft YaHei UI", 14, "bold"), command=self.start_search)
         self.btn_search.pack(side="left", padx=5)
 
-        self.btn_play_result = ctk.CTkButton(top_frame, text="🔊", width=60, height=50, fg_color="green", font=("Microsoft YaHei UI", 18), state="disabled")
+        self.btn_play_result = ctk.CTkButton(top_frame, text="🔊", width=50, height=45, fg_color="green", font=("Microsoft YaHei UI", 16), state="disabled")
         self.btn_play_result.pack(side="left", padx=5)
 
         # Row 1: 状态标签 + 释义标题
@@ -47,15 +47,12 @@ class AddView(BaseView):
         
         ctk.CTkLabel(header_frame, text="📖 释义", font=("Microsoft YaHei UI", 14, "bold"), text_color="gray50").pack(side="right", anchor="e")
 
-        # Row 2: 释义区域（权重3，扩展更多）
-        self.result_textbox = ctk.CTkTextbox(self, width=800, font=("Microsoft YaHei UI", 15), fg_color=("white", "gray20"), border_width=1, border_color="gray80")
-        self.result_textbox.grid(row=2, column=0, sticky="nsew", pady=(5, 15), padx=5)
-        self.result_textbox.insert("0.0", "\n  等待查询...")
-        self.result_textbox.configure(state="disabled")
-        self.bind_context_menu(self.result_textbox)
-
+        # Row 2: Content Area (Dashboard or Results)
+        self.result_container = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        self.result_container.grid(row=2, column=0, sticky="nsew", pady=(5, 15), padx=5)
+        
         # Row 3: 来源语境区域（权重1，扩展较少）
-        ctx_frame = ctk.CTkFrame(self, fg_color=("white", "gray25"), border_width=1, border_color="gray75", corner_radius=10)
+        ctx_frame = ctk.CTkFrame(self, fg_color=("gray95", "gray20"), border_width=1, border_color=("gray85", "gray30"), corner_radius=10)
         ctx_frame.grid(row=3, column=0, sticky="nsew", pady=(0, 20), padx=5)
 
         head_frame = ctk.CTkFrame(ctx_frame, fg_color="transparent")
@@ -248,19 +245,39 @@ class AddView(BaseView):
                     all_words = [word] + derivatives
                     self.controller.db.add_word_families_batch(root, meaning, all_words)
 
-            self.after(0, lambda: self.search_complete(display, "✅ 已保存", word))
+            self.after(0, lambda: self.search_complete(display, "✅ 已保存", word, agg_results=agg_results))
         else:
             self.after(0, lambda: self.search_complete(None, "未找到该单词", None))
 
-    def display_existing_word(self, item, text):
+    def display_existing_word(self, item, text=None):
         self.btn_search.configure(state="normal")
         rc = item.get('review_count', 0)
         self.status_label.configure(text=f"✅ 已存在 (复习: {rc}次)", text_color="green")
 
-        self.result_textbox.configure(state="normal")
-        self.result_textbox.delete("0.0", "end")
-        self.result_textbox.insert("0.0", text)
-        self.result_textbox.configure(state="disabled")
+        # 清空现有卡片
+        for widget in self.result_container.winfo_children():
+            widget.destroy()
+
+        # 如果是从数据库读出的完整内容 (可能包含聚合信息)
+        meaning = item.get('meaning', '').strip()
+        example = item.get('example', '').strip()
+        phonetic = item.get('phonetic', '')
+
+        # 头部卡片 (单词 + 音标)
+        self._create_header_card(item['word'], phonetic)
+
+        # 尝试拆分已保存的聚合内容 (如果包含【...】标记)
+        if "【" in meaning:
+            import re
+            parts = re.split(r'【(.*?)】', meaning)
+            # parts[0] 是第一个【 之前的空字符串或内容
+            for i in range(1, len(parts), 2):
+                s_name = parts[i]
+                s_content = parts[i+1].strip() if i+1 < len(parts) else ""
+                self._create_source_card(s_name, s_content)
+        else:
+            # 兼容旧版本数据或单一源
+            self._create_source_card("我的释义", meaning, example)
 
         self.txt_context_en.delete("0.0", "end")
         if item.get('context_en'):
@@ -280,22 +297,170 @@ class AddView(BaseView):
         self.btn_play_result.configure(state="normal", fg_color="green", command=lambda: self.play_audio(item['word'], self.btn_play_result))
         self.after(500, lambda: self.play_audio(item['word'], self.btn_play_result))
 
-    def search_complete(self, text, status, word):
+    def search_complete(self, display_text, status, word, agg_results=None):
         self.btn_search.configure(state="normal")
         self.status_label.configure(text=status, text_color="green" if "✅" in status else "red")
 
-        if text:
-            self.result_textbox.configure(state="normal")
-            self.result_textbox.delete("0.0", "end")
-            self.result_textbox.insert("0.0", text)
-            self.result_textbox.configure(state="disabled")
+        # 清空现有卡片
+        for widget in self.result_container.winfo_children():
+            widget.destroy()
+
+        if agg_results:
+            sources_data = agg_results.get('sources', {})
+            phonetic = MultiDictService.get_best_phonetic(sources_data)
+            
+            # 1. 头部卡片
+            self._create_header_card(word, phonetic)
+            
+            # 2. 词典源卡片
+            source_order = [
+                MultiDictService.DICT_YOUDAO, 
+                MultiDictService.DICT_CAMBRIDGE, 
+                MultiDictService.DICT_BING,
+                MultiDictService.DICT_FREE
+            ]
+            
+            for source_key in source_order:
+                if source_key in sources_data:
+                    data = sources_data[source_key]
+                    s_name = MultiDictService.DICT_NAMES.get(source_key, source_key)
+                    s_meaning = data.get('meaning', '').strip()
+                    s_example = data.get('example', '').strip() if source_key == MultiDictService.DICT_YOUDAO else ""
+                    if s_meaning:
+                        self._create_source_card(s_name, s_meaning, s_example)
+            
+            # 3. 汇总例句卡片 (如果其他词典有例句)
+            all_examples = MultiDictService.get_all_examples(sources_data)
+            if all_examples:
+                self._create_source_card("精选例句", "", all_examples, icon="📝")
+
+        elif status != "✅ 已保存": # 出错提示
+             self._show_info_card("提示", status, icon="ℹ️")
+
+        if word:
             self.entry_word.delete(0, "end")
             self.btn_play_result.configure(state="normal", fg_color="green", command=lambda: self.play_audio(word, self.btn_play_result))
             self.after(500, lambda: self.play_audio(word, self.btn_play_result))
 
+    # --- 新增内部布局方法 ---
+
+    def _show_info_card(self, title, message, icon="💡"):
+        card = ctk.CTkFrame(self.result_container, fg_color=("gray95", "#2b2b2b"), corner_radius=12)
+        card.pack(fill="x", pady=10, padx=10)
+        
+        ctk.CTkLabel(card, text=f"{icon} {title}", font=("Microsoft YaHei UI", 16, "bold"), text_color="#3B8ED0").pack(pady=(15, 5), padx=20, anchor="w")
+        ctk.CTkLabel(card, text=message, font=("Microsoft YaHei UI", 13), text_color=("gray40", "gray70"), wraplength=700, justify="left").pack(pady=(0, 15), padx=20, anchor="w")
+
+    def _create_header_card(self, word, phonetic):
+        card = ctk.CTkFrame(self.result_container, fg_color=("white", "#1e1e1e"), corner_radius=15, border_width=1, border_color=("gray90", "gray30"))
+        card.pack(fill="x", pady=(0, 10), padx=5)
+        
+        # 单词大字号
+        word_label = ctk.CTkLabel(card, text=word, font=("Microsoft YaHei UI", 32, "bold"), text_color=("#1a1a1a", "#ffffff"))
+        word_label.pack(side="left", padx=(25, 15), pady=25)
+        
+        # 音标
+        if phonetic:
+            ctk.CTkLabel(card, text=phonetic, font=("Microsoft YaHei UI", 16), text_color="#3B8ED0").pack(side="left", pady=30)
+            
+        # 播放按钮 (快捷)
+        btn_p = ctk.CTkButton(card, text="🔊", width=45, height=45, corner_radius=22, fg_color="#4CAF50", hover_color="#45a049",
+                            command=lambda: self.play_audio(word, btn_p))
+        btn_p.pack(side="right", padx=25)
+
+    def _create_source_card(self, source_name, meaning, example="", icon="📚"):
+        card = ctk.CTkFrame(self.result_container, fg_color=("white", "gray25"), corner_radius=12, border_width=1, border_color=("gray90", "gray30"))
+        card.pack(fill="x", pady=8, padx=5)
+        
+        # 头部：词典源名称
+        header = ctk.CTkFrame(card, fg_color=("gray95", "#333333"), height=35, corner_radius=0)
+        header.pack(fill="x")
+        ctk.CTkLabel(header, text=f"{icon} {source_name}", font=("Microsoft YaHei UI", 13, "bold"), text_color=("gray20", "gray80")).pack(side="left", padx=15)
+        
+        # 内容区域
+        body = ctk.CTkFrame(card, fg_color="transparent")
+        body.pack(fill="x", padx=20, pady=15)
+        
+        if meaning:
+            # 使用 Textbox 显示释义，以支持选择和复制
+            m_box = ctk.CTkTextbox(body, height=100, font=("Microsoft YaHei UI", 14), fg_color="transparent", border_width=0, activate_scrollbars=False)
+            m_box.pack(fill="x")
+            m_box.insert("0.0", meaning)
+            m_box.configure(state="disabled")
+            self.bind_context_menu(m_box)
+            
+            # 自适应高度 (估算)
+            lines = meaning.count('\n') + 1
+            m_box.configure(height=min(300, max(40, lines * 25)))
+
+        if example:
+            if meaning:
+                ctk.CTkFrame(body, height=1, fg_color=("gray90", "gray35")).pack(fill="x", pady=10)
+            
+            e_box = ctk.CTkTextbox(body, height=80, font=("Microsoft YaHei UI", 13, "italic"), text_color=("gray40", "gray60"), fg_color="transparent", border_width=0, activate_scrollbars=False)
+            e_box.pack(fill="x")
+            e_box.insert("0.0", example)
+            e_box.configure(state="disabled")
+            self.bind_context_menu(e_box)
+            
+            # 自适应高度
+            e_lines = example.count('\n') + 1
+            e_box.configure(height=min(200, max(40, e_lines * 22)))
+
     def on_show(self):
-        """When showing, focus entry"""
+        """When showing, focus entry and show dashboard if empty"""
         self.entry_word.focus_set()
+        if not self.entry_word.get().strip():
+            self._show_dashboard()
+
+    def _show_dashboard(self):
+        """Show home statistics and motivation cards"""
+        # Clear existing
+        for widget in self.result_container.winfo_children():
+            widget.destroy()
+
+        stats = self.controller.db.get_statistics()
+        
+        # 1. Motivation Card
+        m_card = ctk.CTkFrame(self.result_container, fg_color=("#E3F2FD", "#1A237E"), corner_radius=15)
+        m_card.pack(fill="x", pady=(0, 15), padx=10)
+        
+        hour = datetime.now().hour
+        greeting = "早上好" if 5 <= hour < 12 else "下午好" if 12 <= hour < 18 else "晚上好"
+        
+        ctk.CTkLabel(m_card, text=f"✨ {greeting}，今天也要加油哦！", font=("Microsoft YaHei UI", 20, "bold"), text_color=("#1976D2", "#BBDEFB")).pack(pady=(25, 5), padx=30, anchor="w")
+        ctk.CTkLabel(m_card, text="不积跬步，无以至千里；不积小流，无以成江海。", font=("Microsoft YaHei UI", 13), text_color=("#1976D2", "#90CAF9")).pack(pady=(0, 25), padx=30, anchor="w")
+
+        # 2. Stats Row
+        stats_frame = ctk.CTkFrame(self.result_container, fg_color="transparent")
+        stats_frame.pack(fill="x", pady=10)
+        
+        # Quick helper for stat boxes
+        def create_stat_box(parent, title, value, color_theme):
+            box = ctk.CTkFrame(parent, fg_color=color_theme[0], corner_radius=15, border_width=1, border_color=color_theme[1])
+            box.pack(side="left", fill="both", expand=True, padx=10)
+            ctk.CTkLabel(box, text=title, font=("Microsoft YaHei UI", 13, "bold"), text_color=color_theme[2]).pack(pady=(20, 5))
+            ctk.CTkLabel(box, text=str(value), font=("Consolas", 32, "bold"), text_color=color_theme[2]).pack(pady=(0, 20))
+
+        # Blue
+        create_stat_box(stats_frame, "📚 总词库", stats['total'], (("white", "#2b2b2b"), ("gray90", "gray30"), ("#3B8ED0", "#3B8ED0")))
+        # Orange
+        create_stat_box(stats_frame, "⏰ 待复习", stats['due_today'], (("white", "#2b2b2b"), ("gray90", "gray30"), ("#FF9800", "#FF9800")))
+        # Green
+        create_stat_box(stats_frame, "🏆 已掌握", stats['mastered'], (("white", "#2b2b2b"), ("gray90", "gray30"), ("#4CAF50", "#4CAF50")))
+
+        # 3. Quick Tips Card
+        t_card = ctk.CTkFrame(self.result_container, fg_color=("gray95", "#2b2b2b"), corner_radius=12)
+        t_card.pack(fill="x", pady=15, padx=10)
+        ctk.CTkLabel(t_card, text="💡 学习小贴士", font=("Microsoft YaHei UI", 14, "bold"), text_color="gray").pack(pady=(12, 5), padx=20, anchor="w")
+        tips = [
+            "• 使用 Ctrl+N / L / R 快速在主页、列表和复习间切换",
+            "• 在复习时，如果觉得太简单，可以直接标记为‘已掌握’",
+            "• 您可以在设置中开启更多词典源，获得更丰富的释义"
+        ]
+        for tip in tips:
+            ctk.CTkLabel(t_card, text=tip, font=("Microsoft YaHei UI", 12), text_color="gray", justify="left").pack(padx=20, anchor="w")
+        ctk.CTkLabel(t_card, text="", height=5).pack() # Bottom padding
 
     def load_word(self, item):
         """Called by List View to show details"""

@@ -1,0 +1,23 @@
+PS D:\Projects\生词本> python vocab_app/main.py
+pygame 2.6.1 (SDL 2.28.4, Python 3.12.3)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+Downloading audio from: https://dict.youdao.com/dictvoice?audio=scheduler&type=2
+Audio downloaded successfully: D:\Projects\生词本\sounds\scheduler.mp3
+WNDPROC return value cannot be converted to LRESULT
+TypeError: WPARAM is simple, so must be an int object (got NoneType)
+scheduler  US /ˈskedʒ.uː.lɚ/ [- 引用次数：148,参考来源 - 多用户分集MIMO系统中的信道反馈研究,参考来源 - 网络分布计算中的事务工作流研究,- 引用次数：62]
+------------------------------
+[释义]
+【有道词典】
+n. 计划员；时间调度员；程序机，调度机；调度程序；制表人
+
+【剑桥词典 (Cambridge)】
+• a person who works for a broadcasting company putting the various programmes for the day , week , month , etc. into a particular order （广播公司的） 节目安排人
+
+【Free Dictionary】
+noun. A person or device that determines a schedule, that determines the order that tasks are to be done.
+noun. An operating system component responsible for allocating several resources, most commonly the use of processors by different concurrent processes or threads.
+------------------------------
+[例句]
+• By the event scheduler .
+  通过 事件 调度器 。

@@ -1,7 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
 智能生词本 - 轻量版打包配置
-排除大型科学计算库，减小体积
 """
 
 from PyInstaller.utils.hooks import collect_all
@@ -23,25 +22,39 @@ hiddenimports += tmp_ret[2]
 # 添加必要的 hidden imports
 hiddenimports.extend([
     'sqlite3',
+    'ctypes',
+    'ctypes.wintypes',
     'tkinter',
     'tkinter.ttk',
     'tkinter.font',
     'tkinter.messagebox',
     'tkinter.filedialog',
+    'tkinter.colorchooser',
+    'tkinter.commondialog',
     'customtkinter',
+    'customtkinter.windows',
+    'customtkinter.windows.widgets',
+    'customtkinter.windows.theme',
     'requests',
     'requests.utils',
-    'requests.packages.urllib3',
+    'requests.structures',
     'keyboard',
+    'keyboard._nixKeyboard',
+    'keyboard._nixCommon',
+    'keyboard._win32',
     'PIL',
     'PIL.Image',
     'PIL.ImageTk',
+    'PIL.ImageDraw',
+    'PIL.ImageFont',
     'win10toast',
     'win10toast_click',
     'pystray',
     'pystray._win32',
-    'ctypes',
-    'ctypes.wintypes',
+    'pystray._util',
+    'win32api',
+    'win32con',
+    'win32gui',
 ])
 
 a = Analysis(
@@ -57,6 +70,7 @@ a = Analysis(
         'numpy', 'pandas', 'matplotlib', 'scipy', 'IPython',
         'notebook', 'pytest', 'unittest', 'pydoc',
         'test', 'doctest', 'pdb',
+        'lxml', 'lxml.etree', 'lxml.objectify',
     ],
     noarchive=False,
     optimize=1,
