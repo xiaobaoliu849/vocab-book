@@ -8,6 +8,8 @@ from PyInstaller.utils.hooks import collect_all
 datas = [
     ('version.json', '.'),
     ('config.json', '.'),
+    ('app.ico', '.'),
+    ('app.png', '.'),
 ]
 
 binaries = []
@@ -87,6 +89,7 @@ exe = EXE(
     upx=True,
     upx_exclude=['vcruntime140.dll', 'vcruntime140_1.dll'],
     name='MyVocabBook',
+    icon='app.ico',
     debug=False,
     bootloader_ignore_signals=False,
     console=False,

@@ -8,6 +8,12 @@ signal.signal(signal.SIGINT, signal.SIG_IGN)
 # 在任何其他导入之前设置 SDL 音频驱动 (修复 Windows 下 pygame 无声问题)
 if os.name == 'nt':
     os.environ['SDL_AUDIODRIVER'] = 'directsound'
+    # Enable High DPI Awareness
+    try:
+        from ctypes import windll
+        windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        pass
 
 import customtkinter as ctk
 import keyboard
@@ -36,7 +42,8 @@ class VocabApp(ctk.CTk):
         # Init resources and theme
         init_resources()
         self.config = load_config()
-        setup_theme(self.config)
+        # Schedule icon setup to run after window initialization to prevent overrides
+        self.after(300, self.setup_icon)
 
         # Database
         self.db = DatabaseManager(db_path=DB_PATH, json_path=os.path.join(BASE_DIR, 'vocab.json'))
@@ -100,6 +107,43 @@ class VocabApp(ctk.CTk):
 
         # Handle Close
         self.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    def setup_icon(self):
+        """Set app icon with delay and fallback"""
+        try:
+            from vocab_app.config import RESOURCE_DIR
+            from PIL import ImageTk, Image
+            
+            # Candidates for icon - ICO first for better Windows taskbar support
+            candidates = [
+                (os.path.join(os.getcwd(), 'app.ico'), 'ico'),
+                (os.path.join(RESOURCE_DIR, 'app.ico'), 'ico'),
+                (os.path.join(os.getcwd(), 'app.png'), 'png'),
+                (os.path.join(RESOURCE_DIR, 'app.png'), 'png')
+            ]
+            
+            for path, type_ in candidates:
+                if os.path.exists(path):
+                    print(f"Trying icon: {path}")
+                    try:
+                        if type_ == 'png':
+                            icon_image = Image.open(path)
+                            photo_image = ImageTk.PhotoImage(icon_image)
+                            self.icon_photo = photo_image # Keep reference
+                            # Set for both window and taskbar (True)
+                            self.iconphoto(True, photo_image) 
+                            # self.iconbitmap(path) # Some systems confuse png/ico, but iconphoto is best for png
+                            print("Success setting PNG icon")
+                            break
+                        else:
+                            self.iconbitmap(path)
+                            print("Success setting ICO icon")
+                            break
+                    except Exception as e:
+                        print(f"Error setting {path}: {e}")
+                        
+        except Exception as e:
+            print(f"Setup icon failed: {e}")
 
     def bind_local_hotkeys(self):
         """Bind app-local shortcuts"""

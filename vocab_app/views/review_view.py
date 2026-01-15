@@ -170,7 +170,7 @@ class ReviewView(BaseView):
         """Override: switch to Add view and search selected word"""
         text = self.get_selected_text()
         if text:
-            word = text.strip()
+            word = self.clean_word(text)  # Clean punctuation
             if not word:
                 return
             self.controller.show_frame("add")

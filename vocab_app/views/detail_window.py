@@ -9,6 +9,16 @@ from ..services.multi_dict_service import MultiDictService
 from ..config import FONT_NORMAL
 import webbrowser
 
+
+def clean_word(text):
+    """Clean word by removing leading/trailing punctuation and extra whitespace."""
+    if not text:
+        return ""
+    word = text.strip()
+    # Remove leading and trailing punctuation (keep internal hyphens)
+    word = re.sub(r'^[^\w]+|[^\w]+$', '', word, flags=re.UNICODE)
+    return word
+
 class DetailWindow(ctk.CTkToplevel):
     def __init__(self, master, item, controller, items_list=None, current_index=0):
         super().__init__(master)
@@ -462,10 +472,15 @@ class DetailWindow(ctk.CTkToplevel):
     def play_audio(self):
         if not AudioService.is_available(): return
 
+        # Clean word before playing
+        word_to_play = clean_word(self.item['word'])
+        if not word_to_play:
+            return
+
         self.btn_play.configure(text="⏳", fg_color="orange")
         def _play():
             try:
-                AudioService.play_word(self.item['word'])
+                AudioService.play_word(word_to_play)
                 self.after(0, lambda: self.btn_play.configure(text="🔊", fg_color="green"))
             except Exception:
                 self.after(0, lambda: self.btn_play.configure(text="🔊", fg_color="gray"))
@@ -517,8 +532,8 @@ class DetailWindow(ctk.CTkToplevel):
     def on_app_lookup(self):
         text = self.get_selected_text()
         if text:
-            # Clean up text
-            word = text.strip()
+            # Clean up text (remove punctuation)
+            word = clean_word(text)
             if not word: return
 
             # Switch to Add view and search

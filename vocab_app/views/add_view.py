@@ -466,7 +466,7 @@ class AddView(BaseView):
         """Override: search selected word in current view"""
         text = self.get_selected_text()
         if text:
-            word = text.strip()
+            word = self.clean_word(text)  # Clean punctuation
             if not word:
                 return
             self.entry_word.delete(0, "end")

@@ -1,6 +1,7 @@
 import tkinter as tk
 import customtkinter as ctk
 import threading
+import re
 from ..services.audio_service import AudioService
 
 
@@ -23,6 +24,10 @@ class CTkToolTip:
         self.widget.bind("<Enter>", self._on_enter, add="+")
         self.widget.bind("<Leave>", self._on_leave, add="+")
         self.widget.bind("<Motion>", self._on_motion, add="+")
+        
+        # Hide tooltip when window is minimized/hidden
+        root = self.widget.winfo_toplevel()
+        root.bind("<Unmap>", self._on_window_hide, add="+")
 
         self.tooltip = None
         self.id = None
@@ -47,9 +52,12 @@ class CTkToolTip:
         if self.tooltip:
             return
 
+        root = self.widget.winfo_toplevel()
         self.tooltip = ctk.CTkToplevel(self.widget)
         self.tooltip.overrideredirect(True)
         self.tooltip.attributes("-topmost", True)
+        # Make tooltip follow the main window (hide when minimized)
+        self.tooltip.transient(root)
 
         # Get colors based on theme
         mode = ctk.get_appearance_mode()
@@ -84,6 +92,11 @@ class CTkToolTip:
             y = self.y + 15
             self.tooltip.geometry(f"+{x}+{y}")
 
+    def _on_window_hide(self, event=None):
+        """Hide tooltip when window is minimized"""
+        self._hide_tooltip()
+        return None  # Important: return None to let the event propagate
+
 class BaseView(ctk.CTkFrame):
     def __init__(self, parent, controller, **kwargs):
         super().__init__(parent, **kwargs)
@@ -105,6 +118,11 @@ class BaseView(ctk.CTkFrame):
             print("Audio not available")
             return
 
+        # Clean the word before playing (remove punctuation)
+        clean_word = self.clean_word(word) if hasattr(self, 'clean_word') else word.strip()
+        if not clean_word:
+            return
+
         def _play():
             if button:
                 self.after(0, lambda: button.configure(text="⏳", fg_color="orange"))
@@ -114,7 +132,7 @@ class BaseView(ctk.CTkFrame):
             # So we just run blocking and update UI after
 
             try:
-                AudioService.play_word(word)
+                AudioService.play_word(clean_word)
                 if button:
                     self.after(0, lambda: button.configure(text="🔊", fg_color="green"))
             except Exception as e:
@@ -157,6 +175,20 @@ class BaseView(ctk.CTkFrame):
             return self.current_text_widget.selection_get()
         except tk.TclError:
             return ""
+
+    def clean_word(self, text):
+        """Clean word by removing leading/trailing punctuation and extra whitespace.
+        
+        This fixes the issue where selecting text in context includes punctuation
+        like 'word,' or 'word.' which causes audio download failures.
+        """
+        if not text:
+            return ""
+        # Strip whitespace first
+        word = text.strip()
+        # Remove leading and trailing punctuation (keep internal hyphens for compound words)
+        word = re.sub(r'^[^\w]+|[^\w]+$', '', word, flags=re.UNICODE)
+        return word
 
     def on_copy(self):
         """Copy selected text to clipboard"""
