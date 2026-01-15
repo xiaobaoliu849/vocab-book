@@ -612,14 +612,16 @@ class ListView(BaseView):
             self.btn_next.configure(state="disabled", fg_color=("gray90", "gray30"))
 
     def go_prev_page(self):
-        if self.current_page > 1:
-            self.current_page -= 1
-            self.render_current_page()
-            self.update_pagination_controls()
+        self._change_page(-1)
 
     def go_next_page(self):
-        if self.current_page < self.total_pages:
-            self.current_page += 1
+        self._change_page(1)
+
+    def _change_page(self, delta):
+        """Navigate pages by delta (-1 or +1)"""
+        new_page = self.current_page + delta
+        if 1 <= new_page <= self.total_pages:
+            self.current_page = new_page
             self.render_current_page()
             self.update_pagination_controls()
 

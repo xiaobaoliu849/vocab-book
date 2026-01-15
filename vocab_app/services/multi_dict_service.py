@@ -2,9 +2,19 @@
 多词典聚合查询服务
 支持: 有道词典、剑桥词典 (Cambridge)、Bing词典、Free Dictionary
 """
+import re
 import requests
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+
+def _get_clean_text(el):
+    """Helper to safely extract clean text from a BeautifulSoup element."""
+    if not el:
+        return ""
+    text = el.get_text(separator=' ', strip=True)
+    return re.sub(r'\s+', ' ', text).strip()
+
 
 class MultiDictService:
     """多词典聚合查询服务"""
@@ -61,15 +71,6 @@ class MultiDictService:
             
             # 获取前 3 个释义块
             def_blocks = soup.find_all('div', class_='def-block', limit=3)
-            
-            def _get_clean_text(el):
-                if not el: return ""
-                # Use a unique separator to ensure we can deal with weird nesting
-                t = el.get_text(separator=' ', strip=True)
-                import re
-                # Sometimes words still stick together if they were joined across sibling nodes without spaces
-                # This is a safety cleanup
-                return re.sub(r'\s+', ' ', t).strip()
 
             for block in def_blocks:
                 # 英文释义 (ddef_h -> def)

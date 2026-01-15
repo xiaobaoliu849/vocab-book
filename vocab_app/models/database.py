@@ -15,6 +15,31 @@ class DatabaseManager:
     def get_connection(self):
         return sqlite3.connect(self.db_path)
 
+    def execute(self, query, params=(), fetch=False, commit=True):
+        """Helper to execute a single query with automatic connection handling."""
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(query, params)
+            if commit:
+                conn.commit()
+            if fetch:
+                return cursor.fetchall()
+            return None
+        finally:
+            conn.close()
+
+    def execute_many(self, queries):
+        """Execute multiple queries in a single transaction."""
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            for query, params in queries:
+                cursor.execute(query, params)
+            conn.commit()
+        finally:
+            conn.close()
+
     def init_db(self):
         """Initialize the database tables."""
         conn = self.get_connection()
@@ -291,14 +316,11 @@ class DatabaseManager:
 
     def update_sm2_status(self, word, easiness, interval, repetitions, next_time, rating):
         """Update fields after a review using SM-2 algorithm."""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-
         # 判断是否掌握 (例如间隔超过 180 天或重复次数超过 7 次，可自定义)
         # 这里为了保持与旧逻辑一致，暂时不自动设为 mastered，除非间隔极大
         mastered = 1 if interval > 180 else 0
 
-        cursor.execute('''
+        self.execute('''
             UPDATE words
             SET easiness = ?, interval = ?, repetitions = ?, next_review_time = ?,
                 mastered = ?, review_count = review_count + 1
@@ -307,14 +329,12 @@ class DatabaseManager:
 
         # Log history
         today = datetime.now().strftime('%Y-%m-%d')
-        cursor.execute('SELECT id FROM words WHERE word = ?', (word,))
-        res = cursor.fetchone()
-        if res:
-            wid = res[0]
-            cursor.execute('INSERT INTO review_history (word_id, review_date, rating) VALUES (?, ?, ?)', (wid, today, rating))
-
-        conn.commit()
-        conn.close()
+        res = self.execute('SELECT id FROM words WHERE word = ?', (word,), fetch=True, commit=False)
+        if res and res[0]:
+            self.execute(
+                'INSERT INTO review_history (word_id, review_date, rating) VALUES (?, ?, ?)',
+                (res[0][0], today, rating)
+            )
 
     def get_review_heatmap_data(self):
         """获取过去一年的复习热力图数据 {date: count}"""

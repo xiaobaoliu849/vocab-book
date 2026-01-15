@@ -13,22 +13,21 @@ class TagService:
 
     _freq_data = None
 
-    @staticmethod
-    def _load_freq_data():
-        if TagService._freq_data is not None:
-            return TagService._freq_data
-        
-        TagService._freq_data = {}
+    @classmethod
+    def _load_freq_data(cls):
+        if cls._freq_data is not None:
+            return cls._freq_data
+
+        cls._freq_data = {}
         try:
-            # 尝试从 resources 目录加载
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             json_path = os.path.join(base_dir, 'resources', 'word_freq.json')
             if os.path.exists(json_path):
                 with open(json_path, 'r', encoding='utf-8') as f:
-                    TagService._freq_data = json.load(f)
+                    cls._freq_data = json.load(f)
         except Exception as e:
             print(f"Error loading frequency data: {e}")
-        return TagService._freq_data
+        return cls._freq_data
 
     @staticmethod
     def get_tags_for_word(word, html_content=None):
@@ -36,11 +35,11 @@ class TagService:
         根据有道 HTML、本地词频库或内置考纲库获取单词标签。
         """
         tags = set()
-        word = word.lower().strip()
+        word_lower = word.lower().strip()
 
         # 1. 词频数据匹配 (COCA/BNC)
         freq_map = TagService._load_freq_data()
-        rank = freq_map.get(word)
+        rank = freq_map.get(word_lower)
         if rank:
             if rank <= 3000:
                 tags.add(f"核心({rank})")
@@ -53,20 +52,20 @@ class TagService:
 
         # 2. 内置库匹配
         for tag, words in TagService.EXAM_DICT.items():
-            if word in words:
+            if word_lower in words:
                 tags.add(tag)
 
         # 3. 从有道 HTML 抓取 (更准确)
         if html_content:
             # 查找类似于 "考研 / CET4 / CET6" 的文本
-            matches = re.findall(r'class="exam-type">([^<]+)</span>', html_content)
-            for m in matches:
-                tags.update([t.strip() for t in m.split('/')])
-
-            matches2 = re.findall(r'class="additional">([^<]+)</span>', html_content)
-            for m in matches2:
-                if any(x in m for x in ["4", "6", "研", "托", "雅", "GRE"]):
-                    tags.update([t.strip() for t in m.replace("考试：", "").split('/')])
+            for pattern, predicate in [
+                (r'class="exam-type">([^<]+)</span>', lambda m: True),
+                (r'class="additional">([^<]+)</span>', lambda m: any(x in m for x in ["4", "6", "研", "托", "雅", "GRE"]))
+            ]:
+                matches = re.findall(pattern, html_content)
+                for m in matches:
+                    if predicate(m):
+                        tags.update([t.strip() for t in m.replace("考试：", "").split('/')])
 
         return list(tags)
 

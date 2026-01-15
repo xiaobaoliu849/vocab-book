@@ -8,6 +8,14 @@ from ..services.dict_service import DictService
 from ..services.multi_dict_service import MultiDictService
 from ..services.word_family_service import WordFamilyService
 
+# Dictionary source display order
+SOURCE_ORDER = [
+    MultiDictService.DICT_YOUDAO,
+    MultiDictService.DICT_CAMBRIDGE,
+    MultiDictService.DICT_BING,
+    MultiDictService.DICT_FREE
+]
+
 class AddView(BaseView):
     def setup_ui(self):
         self.configure(fg_color="transparent")
@@ -191,15 +199,8 @@ class AddView(BaseView):
 
             # 各源释义
             combined_meanings = []
-            # 优先级顺序
-            source_order = [
-                MultiDictService.DICT_YOUDAO, 
-                MultiDictService.DICT_CAMBRIDGE, 
-                MultiDictService.DICT_BING,
-                MultiDictService.DICT_FREE
-            ]
-            
-            for source_key in source_order:
+
+            for source_key in SOURCE_ORDER:
                 if source_key in sources_data:
                     data = sources_data[source_key]
                     source_name = MultiDictService.DICT_NAMES.get(source_key, source_key)
@@ -311,16 +312,9 @@ class AddView(BaseView):
             
             # 1. 头部卡片
             self._create_header_card(word, phonetic)
-            
+
             # 2. 词典源卡片
-            source_order = [
-                MultiDictService.DICT_YOUDAO, 
-                MultiDictService.DICT_CAMBRIDGE, 
-                MultiDictService.DICT_BING,
-                MultiDictService.DICT_FREE
-            ]
-            
-            for source_key in source_order:
+            for source_key in SOURCE_ORDER:
                 if source_key in sources_data:
                     data = sources_data[source_key]
                     s_name = MultiDictService.DICT_NAMES.get(source_key, source_key)
@@ -468,50 +462,13 @@ class AddView(BaseView):
         display = f"{item['word']}  {item.get('phonetic','')}{tags_str}\n\n[释义]\n{item['meaning']}\n\n[例句]\n{item['example']}"
         self.display_existing_word(item, display)
 
-    def create_context_menu(self):
-        # Configure menu font
-        menu_font = ("Microsoft YaHei UI", 12)
-
-        self.context_menu = tk.Menu(self, tearoff=0, font=menu_font)
-        self.context_menu.add_command(label="复制 (Copy)", command=self.on_copy)
-        self.context_menu.add_separator()
-        self.context_menu.add_command(label="查词 (Look up)", command=self.on_lookup_recursive)
-        self.current_text_widget = None
-
-    def bind_context_menu(self, widget):
-        widget.bind("<Button-3>", lambda e, w=widget: self.show_context_menu(e, w))
-        widget.bind("<Button-2>", lambda e, w=widget: self.show_context_menu(e, w)) # macOS
-
-    def show_context_menu(self, event, widget):
-        self.current_text_widget = widget
-        # Only show if text is selected
-        if self.get_selected_text():
-            try:
-                self.context_menu.tk_popup(event.x_root, event.y_root)
-            finally:
-                self.context_menu.grab_release()
-
-    def get_selected_text(self):
-        if not self.current_text_widget: return ""
-        try:
-            return self.current_text_widget.selection_get()
-        except tk.TclError:
-            return ""
-
-    def on_copy(self):
-        text = self.get_selected_text()
-        if text:
-            self.clipboard_clear()
-            self.clipboard_append(text)
-            self.update()
-
-    def on_lookup_recursive(self):
+    def on_lookup(self):
+        """Override: search selected word in current view"""
         text = self.get_selected_text()
         if text:
             word = text.strip()
-            if not word: return
-
-            # Populate entry and trigger search directly in current view
+            if not word:
+                return
             self.entry_word.delete(0, "end")
             self.entry_word.insert(0, word)
             self.after(50, self.start_search)

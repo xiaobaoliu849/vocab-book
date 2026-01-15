@@ -25,6 +25,7 @@ from vocab_app.views.list_view import ListView
 from vocab_app.views.review_view import ReviewView
 from vocab_app.views.settings_view import SettingsView
 from vocab_app.views.close_dialog import CloseDialog
+from vocab_app.views.base_view import CTkToolTip
 from vocab_app.services.tray_service import TrayService
 from vocab_app.services.notification_service import NotificationService, ReviewScheduler
 
@@ -132,29 +133,29 @@ class VocabApp(ctk.CTk):
         # 2. Navigation Buttons
         self.nav_buttons = {}
         nav_items = [
-            ("add", "🏠", "词汇中心"),
-            ("list", "📚", "单词列表"),
-            ("review", "🧠", "智能复习")
+            ("add", "🏠", "词汇中心", "搜索和添加新单词"),
+            ("list", "📚", "单词列表", "管理已收藏的单词"),
+            ("review", "🧠", "智能复习", "使用 SM-2 算法复习单词")
         ]
 
-        for i, (name, icon, label) in enumerate(nav_items):
-            btn = self._create_nav_button(name, icon, label, i + 1)
+        for i, (name, icon, label, tooltip) in enumerate(nav_items):
+            btn = self._create_nav_button(name, icon, label, i + 1, tooltip)
             self.nav_buttons[name] = btn
 
         # 3. Settings at bottom
-        self.btn_settings = self._create_nav_button("settings", "⚙️", "设置", i + 7) # Use i+7 to put at bottom
+        self.btn_settings = self._create_nav_button("settings", "⚙️", "设置", i + 7, "应用设置和关于")
         self.nav_buttons["settings"] = self.btn_settings
 
         if self.is_sidebar_collapsed:
             self.collapse_sidebar_ui()
 
-    def _create_nav_button(self, name, icon, label, row):
+    def _create_nav_button(self, name, icon, label, row, tooltip):
         # Activity indicator (Left blue bar)
         indicator = ctk.CTkFrame(self.sidebar_frame, width=4, height=32, corner_radius=2, fg_color="transparent")
         indicator.grid(row=row, column=0, sticky="w", padx=(1, 0), pady=8)
-        
+
         btn = ctk.CTkButton(
-            self.sidebar_frame, 
+            self.sidebar_frame,
             text=f"{icon}   {label}" if not self.is_sidebar_collapsed else icon,
             width=self.sidebar_width_full-20 if not self.is_sidebar_collapsed else 45,
             height=45,
@@ -167,10 +168,14 @@ class VocabApp(ctk.CTk):
             command=lambda n=name: self.show_frame(n)
         )
         btn.grid(row=row, column=0, padx=(10 if not self.is_sidebar_collapsed else 12, 10), pady=8)
-        
+
         btn.indicator = indicator # Store ref
         btn.full_text = f"{icon}   {label}"
         btn.icon_only = icon
+
+        # Add tooltip
+        CTkToolTip(btn, tooltip, delay=300)
+
         return btn
 
     def toggle_sidebar(self):

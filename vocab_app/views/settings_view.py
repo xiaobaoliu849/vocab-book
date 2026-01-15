@@ -6,7 +6,7 @@ import shutil
 from PIL import Image
 from datetime import datetime, timedelta
 
-from .base_view import BaseView
+from .base_view import BaseView, CTkToolTip
 from ..config import SOUNDS_DIR, save_config, BASE_DIR, RESOURCE_DIR, APP_VERSION
 from ..services.export_service import ExportService
 from ..services.update_service import UpdateService
@@ -64,16 +64,16 @@ class SettingsView(BaseView):
         ctk.CTkLabel(self.sidebar_frame, text="设置选项", font=("Microsoft YaHei UI", 16, "bold"), anchor="w").pack(fill="x", padx=20, pady=(20, 15))
 
         categories = [
-            ("stats", "📊  统计与数据"),
-            ("general", "⚙️  常规设置"),
-            ("dicts", "📚  词典与外观"),
-            ("about", "ℹ️  关于软件"),
+            ("stats", "📊  统计与数据", "查看学习统计、复习热力图和数据管理"),
+            ("general", "⚙️  常规设置", "配置快捷键、窗口行为和复习提醒"),
+            ("dicts", "📚  词典与外观", "选择词典源和切换主题模式"),
+            ("about", "ℹ️  关于软件", "版本信息、检查更新和支持开发者"),
         ]
 
-        for cat_id, text in categories:
+        for cat_id, text, tooltip in categories:
             btn_container = ctk.CTkFrame(self.sidebar_frame, fg_color="transparent")
             btn_container.pack(fill="x", pady=2)
-            
+
             indicator = ctk.CTkFrame(btn_container, width=3, height=28, corner_radius=2, fg_color="transparent")
             indicator.pack(side="left", padx=(1, 0))
 
@@ -89,9 +89,12 @@ class SettingsView(BaseView):
                 command=lambda c=cat_id: self.switch_category(c)
             )
             btn.pack(side="left", fill="x", expand=True, padx=(5, 10))
-            
+
             btn.indicator = indicator # Store ref
             self.category_buttons[cat_id] = btn
+
+            # Add tooltip
+            CTkToolTip(btn, tooltip, delay=300)
 
     def switch_category(self, category_name):
         """Switch the content area to the selected category"""
@@ -292,12 +295,9 @@ class SettingsView(BaseView):
 
         # 获取或初始化词典配置
         if "dict_sources" not in self.controller.config:
-            self.controller.config["dict_sources"] = {
-                "youdao": True,
-                "cambridge": True,
-                "bing": True,
-                "freedict": True
-            }
+            from ..config import get_default_config
+            default_cfg = get_default_config()
+            self.controller.config["dict_sources"] = default_cfg["dict_sources"]
 
         self.controller.config["dict_sources"][dict_id] = is_enabled
         save_config(self.controller.config)
@@ -655,12 +655,9 @@ class SettingsView(BaseView):
 
         # Update Dict Sources (if visible)
         if hasattr(self, 'dict_switches'):
-            dict_sources = self.controller.config.get("dict_sources", {
-                "youdao": True,
-                "cambridge": True,
-                "bing": True,
-                "freedict": True
-            })
+            from ..config import get_default_config
+            default_cfg = get_default_config()
+            dict_sources = self.controller.config.get("dict_sources", default_cfg["dict_sources"])
             for dict_id, switch in self.dict_switches.items():
                 if switch.winfo_exists():
                     if dict_id == "youdao":

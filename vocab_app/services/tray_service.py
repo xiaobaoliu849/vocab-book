@@ -115,7 +115,7 @@ class TrayService:
         if self.icon:
             try:
                 self.icon.stop()
-            except:
+            except Exception:
                 pass
             self.icon = None
 
@@ -147,5 +147,5 @@ class TrayService:
 
         try:
             self.icon.icon = image
-        except:
+        except Exception:
             pass

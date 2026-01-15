@@ -84,7 +84,8 @@ class ReviewView(BaseView):
             if hasattr(self.lbl_rw, "_v_scrollbar"):
                 self.lbl_rw._v_scrollbar.grid_forget()
                 self.lbl_rw._v_scrollbar.pack_forget()
-        except: pass
+        except AttributeError:
+            pass
         
         self.lbl_rw.insert("0.0", "🎯 准备开始复习")
         self.lbl_rw.configure(state="disabled")
@@ -165,58 +166,19 @@ class ReviewView(BaseView):
         self.next_card()
         self.bind_keys()
 
-    def create_context_menu(self):
-        # Configure menu font
-        menu_font = ("Microsoft YaHei UI", 12)
-
-        self.context_menu = tk.Menu(self, tearoff=0, font=menu_font)
-        self.context_menu.add_command(label="复制 (Copy)", command=self.on_copy)
-        self.context_menu.add_separator()
-        self.context_menu.add_command(label="查词 (Look up)", command=self.on_lookup_recursive)
-        self.current_text_widget = None
-
-    def bind_context_menu(self, widget):
-        widget.bind("<Button-3>", lambda e, w=widget: self.show_context_menu(e, w))
-        widget.bind("<Button-2>", lambda e, w=widget: self.show_context_menu(e, w)) # macOS
-
-    def show_context_menu(self, event, widget):
-        self.current_text_widget = widget
-        # Only show if text is selected
-        if self.get_selected_text():
-            try:
-                self.context_menu.tk_popup(event.x_root, event.y_root)
-            finally:
-                self.context_menu.grab_release()
-
-    def get_selected_text(self):
-        if not self.current_text_widget: return ""
-        try:
-            return self.current_text_widget.selection_get()
-        except tk.TclError:
-            return ""
-
-    def on_copy(self):
-        text = self.get_selected_text()
-        if text:
-            self.clipboard_clear()
-            self.clipboard_append(text)
-            self.update()
-
-    def on_lookup_recursive(self):
+    def on_lookup(self):
+        """Override: switch to Add view and search selected word"""
         text = self.get_selected_text()
         if text:
             word = text.strip()
-            if not word: return
-
-            # Switch to Add view and search
+            if not word:
+                return
             self.controller.show_frame("add")
             if "add" in self.controller.frames:
                 add_view = self.controller.frames["add"]
                 add_view.entry_word.delete(0, "end")
                 add_view.entry_word.insert(0, word)
-                # Use after to allow UI to switch before starting search
                 add_view.after(100, add_view.start_search)
-
         self.bind_keys()
 
     def bind_keys(self):
@@ -277,49 +239,16 @@ class ReviewView(BaseView):
         example = self.cur_word.get('example', '')
         context = self.cur_word.get('context_en', '')
 
-        # --- MODE 1: Flashcard (Recognition) ---
-        if self.review_method == "flashcard":
-            sentence = (example.split('\n')[0] if example else context)
-            display_text = word
-            if sentence:
-                masked = self.get_cloze_text(sentence, word)
-                if "____" in masked:
-                    display_text = masked
-            self.update_lbl_rw(display_text, FONT_NORMAL if len(display_text) > 25 else FONT_LARGE)
-            self.reveal_overlay.pack(expand=True, pady=10)
+        # Dispatch to mode-specific handlers
+        method_handlers = {
+            "flashcard": self._setup_flashcard_mode,
+            "spelling": self._setup_spelling_mode,
+            "sentence": self._setup_sentence_mode,
+        }
 
-        # --- MODE 2: Spelling ---
-        elif self.review_method == "spelling":
-            self.update_lbl_rw("⌨️ 单词拼写", FONT_LARGE)
-            self.lbl_ex_hint.configure(text="根据释义拼写单词 (Enter 检查)")
-            
-            # Use the scrollable textbox for the meaning in spelling mode!
-            self.txt_rm.configure(state="normal")
-            self.txt_rm.insert("0.0", self._clean_display_text(self.cur_word.get('meaning', '')))
-            self.txt_rm.configure(state="disabled")
-            self.txt_rm.see("0.0")
-            
-            self.exercise_overlay.pack(fill="x", padx=40, pady=(0, 10))
-            self.entry_ex.focus_set()
-
-        # --- MODE 3: Sentence (Dictation) ---
-        elif self.review_method == "sentence":
-            sentence = (example.split('\n')[0] if example else context)
-            if not sentence:
-                self.update_lbl_rw("⌨️ 拼写练习 (无语境)", FONT_NORMAL)
-                self.lbl_ex_hint.configure(text="暂无语境，请根据释义拼写")
-            else:
-                self.update_lbl_rw(self.get_cloze_text(sentence, word), FONT_NORMAL)
-                self.lbl_ex_hint.configure(text="填空练习 (补全单词并回车)")
-            
-            # Also show meaning in textbox as a hint
-            self.txt_rm.configure(state="normal")
-            self.txt_rm.insert("0.0", self._clean_display_text(self.cur_word.get('meaning', '')))
-            self.txt_rm.configure(state="disabled")
-            self.txt_rm.see("0.0")
-
-            self.exercise_overlay.pack(fill="x", padx=40, pady=(0, 10))
-            self.entry_ex.focus_set()
+        handler = method_handlers.get(self.review_method)
+        if handler:
+            handler(word, example, context)
 
         # Audio Play (Auto)
         def safe_play():
@@ -327,6 +256,50 @@ class ReviewView(BaseView):
         self.btn_rp.configure(command=safe_play)
         if self.review_method != "spelling": # Don't play in spelling mode until revealed/checked? Standard learning practice.
             safe_play()
+
+    def _setup_flashcard_mode(self, word, example, context):
+        """Setup flashcard (recognition) mode"""
+        sentence = (example.split('\n')[0] if example else context)
+        display_text = word
+        if sentence:
+            masked = self.get_cloze_text(sentence, word)
+            if "____" in masked:
+                display_text = masked
+        self.update_lbl_rw(display_text, FONT_NORMAL if len(display_text) > 25 else FONT_LARGE)
+        self.reveal_overlay.pack(expand=True, pady=10)
+
+    def _setup_spelling_mode(self, word, example, context):
+        """Setup spelling mode"""
+        self.update_lbl_rw("⌨️ 单词拼写", FONT_LARGE)
+        self.lbl_ex_hint.configure(text="根据释义拼写单词 (Enter 检查)")
+
+        # Use the scrollable textbox for the meaning in spelling mode!
+        self.txt_rm.configure(state="normal")
+        self.txt_rm.insert("0.0", self._clean_display_text(self.cur_word.get('meaning', '')))
+        self.txt_rm.configure(state="disabled")
+        self.txt_rm.see("0.0")
+
+        self.exercise_overlay.pack(fill="x", padx=40, pady=(0, 10))
+        self.entry_ex.focus_set()
+
+    def _setup_sentence_mode(self, word, example, context):
+        """Setup sentence dictation mode"""
+        sentence = (example.split('\n')[0] if example else context)
+        if not sentence:
+            self.update_lbl_rw("⌨️ 拼写练习 (无语境)", FONT_NORMAL)
+            self.lbl_ex_hint.configure(text="暂无语境，请根据释义拼写")
+        else:
+            self.update_lbl_rw(self.get_cloze_text(sentence, word), FONT_NORMAL)
+            self.lbl_ex_hint.configure(text="填空练习 (补全单词并回车)")
+
+        # Also show meaning in textbox as a hint
+        self.txt_rm.configure(state="normal")
+        self.txt_rm.insert("0.0", self._clean_display_text(self.cur_word.get('meaning', '')))
+        self.txt_rm.configure(state="disabled")
+        self.txt_rm.see("0.0")
+
+        self.exercise_overlay.pack(fill="x", padx=40, pady=(0, 10))
+        self.entry_ex.focus_set()
 
     def get_cloze_text(self, sentence, word):
         """Replace the word (and its common variations) with blanks."""
