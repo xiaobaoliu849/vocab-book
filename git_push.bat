@@ -11,16 +11,20 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-:: 2. Add all changes
+:: 2. Pull from remote
+echo Pulling from GitHub...
+git pull origin main
+
+:: 3. Add all changes
 echo Adding changes...
 git add .
 
-:: 3. Commit with message
-set "commit_msg=UI optimization and branding unification %date% %time%"
+:: 4. Commit with message
+set "commit_msg=Sync and update %date% %time%"
 echo Committing with message: "%commit_msg%"
 git commit -m "%commit_msg%"
 
-:: 4. Push to remote
+:: 5. Push to remote
 echo Pushing to GitHub...
 git push origin main
 
