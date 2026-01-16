@@ -173,7 +173,11 @@ class AddView(BaseView):
         self.txt_context_cn.delete("0.0", "end")
         self.last_translated_text = ""
 
-    def start_search(self):
+    def start_search(self, allow_network=True):
+        """
+        搜索单词
+        allow_network: 是否允许网络查询（False=只从本地数据库读取，不触发网络请求）
+        """
         word = self.entry_word.get().strip()
         if not word:
             return
@@ -188,20 +192,26 @@ class AddView(BaseView):
         self.txt_context_en.delete("0.0", "end")
         self.txt_context_cn.configure(state="normal")
         self.txt_context_cn.delete("0.0", "end")
-        threading.Thread(target=self._search_thread_wrapper, args=(word,), daemon=True).start()
+        threading.Thread(target=self._search_thread_wrapper, args=(word, allow_network), daemon=True).start()
 
-    def _search_thread_wrapper(self, word):
+    def _search_thread_wrapper(self, word, allow_network=True):
         try:
-            self.search_word_thread(word)
+            self.search_word_thread(word, allow_network)
         finally:
             self._search_lock.release()
 
-    def search_word_thread(self, word):
+    def search_word_thread(self, word, allow_network=True):
         existing = self.controller.db.get_word(word)
         if existing:
             tags_str = f" [{existing['tags']}]" if existing.get('tags') else ""
             display = f"{existing['word']}  {existing.get('phonetic','')}{tags_str}\n\n[释义]\n{existing['meaning']}\n\n[例句]\n{existing['example']}"
             self.after(0, lambda: self.display_existing_word(existing, display))
+            return
+
+        # 单词不在数据库中
+        if not allow_network:
+            # 不允许网络查询，直接提示未找到
+            self.after(0, lambda: self.search_complete(None, "未在词库中找到该单词", None))
             return
 
         # 1. 先获取有道结果 (保留原有的丰富数据: tags, roots, families)

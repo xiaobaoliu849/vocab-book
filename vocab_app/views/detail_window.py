@@ -543,7 +543,8 @@ class DetailWindow(ctk.CTkToplevel):
                 add_view.entry_word.delete(0, "end")
                 add_view.entry_word.insert(0, word)
                 # Use after to allow UI to switch before starting search
-                add_view.after(100, add_view.start_search)
+                # allow_network=False: 已有单词直接显示，不再增强搜索
+                add_view.after(100, lambda: add_view.start_search(allow_network=False))
 
             # Close detail window
             self.destroy()
