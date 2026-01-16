@@ -149,7 +149,7 @@ class MultiDictService:
             if qdef:
                 meanings = []
                 for li in qdef.find_all('li'):
-                    text = li.get_text(strip=True)
+                    text = li.get_text(separator=' ', strip=True)
                     if text and len(text) > 1:
                         meanings.append(text)
                 meaning = "\n".join(meanings)
@@ -162,7 +162,7 @@ class MultiDictService:
                     en_sent = first_sent.find('div', class_='sen_en')
                     cn_sent = first_sent.find('div', class_='sen_cn')
                     if en_sent and cn_sent:
-                        example = f"{en_sent.get_text(strip=True)}\n{cn_sent.get_text(strip=True)}"
+                        example = f"{en_sent.get_text(separator=' ', strip=True)}\n{cn_sent.get_text(separator=' ', strip=True)}"
 
             return {
                 "source": MultiDictService.DICT_BING,

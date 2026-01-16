@@ -31,12 +31,50 @@ class DetailWindow(ctk.CTkToplevel):
         self.title(f"单词详情: {item['word']}")
         self.geometry("680x880") # Slightly taller for navigation
 
+        # 设置窗口图标
+        self._set_window_icon()
+
         self.setup_ui()
         self.load_word_data()
         
         # Remove grab_set() as it can block minimize button on some Windows environments.
         # Use focus_force to ensure it pops up but remains a standard window.
         self.after(10, self.focus_force)
+
+    def _set_window_icon(self):
+        """设置窗口图标 - 复制自主程序"""
+        import os
+        import sys
+        
+        def do_set_icon():
+            try:
+                from PIL import ImageTk, Image
+                
+                # 获取应用根目录
+                if getattr(sys, 'frozen', False):
+                    base_dir = os.path.dirname(sys.executable)
+                else:
+                    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                
+                # 候选图标路径
+                candidates = [
+                    (os.path.join(base_dir, 'app.ico'), 'ico'),
+                    (os.path.join(os.getcwd(), 'app.ico'), 'ico'),
+                ]
+                
+                for path, type_ in candidates:
+                    if os.path.exists(path):
+                        try:
+                            self.iconbitmap(path)
+                            print(f"DetailWindow: Success setting icon from {path}")
+                            return
+                        except Exception as e:
+                            print(f"DetailWindow: Error setting {path}: {e}")
+            except Exception as e:
+                print(f"DetailWindow: Setup icon failed: {e}")
+        
+        # 使用延迟确保窗口完全创建
+        self.after(200, do_set_icon)
 
     def setup_ui(self):
         self.configure(fg_color=("white", "#1e1e1e"))
@@ -105,16 +143,13 @@ class DetailWindow(ctk.CTkToplevel):
         )
         self.phonetic_label.pack(side="left", padx=20)
 
-        # Right Actions
-        actions_header = ctk.CTkFrame(header, fg_color="transparent")
-        actions_header.pack(side="right", fill="y")
-
+        # 播放按钮放在同一行的右侧
         self.btn_play = ctk.CTkButton(
-            actions_header, text="🔊", width=44, height=44, corner_radius=22, 
+            info_container, text="🔊", width=44, height=44, corner_radius=22, 
             font=("Arial", 20), fg_color=("#4CAF50", "#2E7D32"), 
             hover_color=("#388E3C", "#1B5E20"), command=self.play_audio
         )
-        self.btn_play.pack(side="right")
+        self.btn_play.pack(side="right", padx=(0, 10))
 
         # --- Main Scrollable Content ---
         self.scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
@@ -241,54 +276,48 @@ class DetailWindow(ctk.CTkToplevel):
         ).pack(side="left", expand=True, padx=8)
 
     def create_selectable_text(self, parent, text, font_size, width_chars, color=None):
-        """Creates a selectable text area that looks like a label and auto-adjusts height."""
+        """使用 CTkLabel 显示文本，简单稳定"""
         text = text.strip()
-        # Clean spacing
         text = re.sub(r'\.([a-zA-Z])', r'. \1', text)
         
-        # Height estimation
-        lines = text.count('\n') + 1
-        est_lines = max(lines, len(text) // width_chars + 1)
-        # 1.6x font size usually covers line height in pixels
-        calc_height = est_lines * (font_size + 8) + 10
-
-        txt = ctk.CTkTextbox(
-            parent, 
-            height=calc_height, 
+        if not text:
+            text = " "
+        
+        # 使用 CTkLabel，简单稳定
+        label = ctk.CTkLabel(
+            parent,
+            text=text,
             font=("Microsoft YaHei UI", font_size),
-            fg_color="transparent",
-            text_color=color,
-            border_width=0,
-            wrap="word",
-            padx=0, pady=0
+            text_color=color if color else ("gray20", "gray80"),
+            anchor="nw",
+            justify="left",
+            wraplength=480  # 适合详情页宽度
         )
-        # --- CRITICAL HACK: Hide the internal scrollbar to prevent "dropdown" appearance ---
-        try:
-            if hasattr(txt, "_v_scrollbar"):
-                txt._v_scrollbar.grid_forget()
-                txt._v_scrollbar.pack_forget()
-        except:
-            pass
-
-        txt.insert("0.0", text)
-        txt.configure(state="disabled")
-        self.bind_context_menu(txt)
-        return txt
+        
+        return label
 
     def create_content_card(self, parent, title, content, accent_color):
-        card = ctk.CTkFrame(parent, fg_color=("white", "#2b2b2b"), corner_radius=16, border_width=1, border_color=("gray90", "gray30"))
-        card.pack(fill="x", pady=6) # Reduced pady
+        """紧凑卡片布局"""
+        card = ctk.CTkFrame(parent, fg_color=("white", "#2b2b2b"), corner_radius=10, border_width=1, border_color=("gray90", "gray30"))
+        card.pack(fill="x", pady=4)
         
-        # Left Accent Border
-        accent = ctk.CTkFrame(card, width=4, fg_color=accent_color, corner_radius=2)
-        accent.pack(side="left", fill="y", padx=(12, 0), pady=12)
-
-        inner_frame = ctk.CTkFrame(card, fg_color="transparent")
-        inner_frame.pack(side="left", fill="both", expand=True, padx=15, pady=10)
-
-        ctk.CTkLabel(inner_frame, text=title, font=("Microsoft YaHei UI", 12, "bold"), text_color="gray50", anchor="w").pack(fill="x")
+        # 简单的内部布局：左边装饰条 + 右边内容
+        inner = ctk.CTkFrame(card, fg_color="transparent")
+        inner.pack(fill="x", padx=10, pady=10)
         
-        self.create_selectable_text(inner_frame, content, 13, 50).pack(fill="x", pady=(2, 0))
+        # 使用 grid 布局确保装饰条不会拉伸
+        inner.grid_columnconfigure(1, weight=1)
+        
+        # 装饰条 - 固定高度，不用 fill
+        accent = ctk.CTkFrame(inner, width=4, height=50, fg_color=accent_color, corner_radius=2)
+        accent.grid(row=0, column=0, rowspan=2, sticky="n", padx=(0, 10))
+        
+        # 标题
+        ctk.CTkLabel(inner, text=title, font=("Microsoft YaHei UI", 11, "bold"), text_color="gray50", anchor="w").grid(row=0, column=1, sticky="w")
+        
+        # 内容
+        content_label = self.create_selectable_text(inner, content, 13, 50)
+        content_label.grid(row=1, column=1, sticky="w", pady=(4, 0))
 
     def create_small_card(self, parent, title, content, column, color):
         card = ctk.CTkFrame(parent, fg_color=("white", "#2b2b2b"), corner_radius=12, border_width=1, border_color=("gray90", "gray30"))

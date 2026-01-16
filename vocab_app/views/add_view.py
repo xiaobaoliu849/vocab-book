@@ -217,14 +217,7 @@ class AddView(BaseView):
         # 1. 先获取有道结果 (保留原有的丰富数据: tags, roots, families)
         youdao_result = DictService.search_word(word)
 
-        # 2. 检查有道结果是否完整，如果完整则跳过其他词典查询以加快速度
-        agg_results = None
-        if youdao_result and youdao_result.get('meaning') and youdao_result.get('example'):
-            # 有道已有完整释义和例句，只使用有道数据，跳过其他词典查询
-            self.after(0, lambda: self._use_youdao_only(youdao_result, word))
-            return
-
-        # 3. 并发查询其他词典（有道数据不完整时）
+        # 2. 始终查询所有启用的词典，确保显示多词典结果
         agg_results = MultiDictService.aggregate_search(word, youdao_result=youdao_result)
         
         # 3. 确定主要结果 (优先使用有道，如果没有则取其他有的)
@@ -378,9 +371,14 @@ class AddView(BaseView):
                 s_name = parts[i]
                 s_content = parts[i+1].strip() if i+1 < len(parts) else ""
                 self._create_source_card(s_name, s_content)
+            # 例句单独显示在精选例句卡片中
+            if example:
+                self._create_source_card("精选例句", "", example, icon="📝")
         else:
-            # 兼容旧版本数据或单一源
-            self._create_source_card("我的释义", meaning, example)
+            # 兼容旧版本数据或单一源 - 释义和例句分开显示
+            self._create_source_card("有道词典", meaning)
+            if example:
+                self._create_source_card("精选例句", "", example, icon="📝")
 
         self.txt_context_en.delete("0.0", "end")
         if item.get('context_en'):
@@ -415,15 +413,14 @@ class AddView(BaseView):
             # 1. 头部卡片
             self._create_header_card(word, phonetic)
 
-            # 2. 词典源卡片
+            # 2. 词典源卡片 (只显示释义，例句统一在精选例句中)
             for source_key in SOURCE_ORDER:
                 if source_key in sources_data:
                     data = sources_data[source_key]
                     s_name = MultiDictService.DICT_NAMES.get(source_key, source_key)
                     s_meaning = data.get('meaning', '').strip()
-                    s_example = data.get('example', '').strip() if source_key == MultiDictService.DICT_YOUDAO else ""
                     if s_meaning:
-                        self._create_source_card(s_name, s_meaning, s_example)
+                        self._create_source_card(s_name, s_meaning)
             
             # 3. 汇总例句卡片 (如果其他词典有例句)
             all_examples = MultiDictService.get_all_examples(sources_data)
@@ -475,7 +472,7 @@ class AddView(BaseView):
 
         # 内容区域
         body = ctk.CTkFrame(card, fg_color="transparent")
-        body.pack(fill="x", padx=20, pady=15)
+        body.pack(fill="x", padx=15, pady=10)
 
         if meaning:
             # 使用 Textbox 显示释义，支持选择和复制，高度自适应
@@ -485,28 +482,59 @@ class AddView(BaseView):
             m_box.configure(state="disabled")
             self.bind_context_menu(m_box)
 
-            # 根据内容行数自适应高度
-            lines = meaning.count('\n') + 1
-            base_height = 30  # 基础高度
-            line_height = 22  # 每行高度
-            estimated_height = base_height + lines * line_height
-            m_box.configure(height=min(400, max(60, estimated_height)))
+            # 精确计算高度：智能判断中英文，调整每行字符数
+            # 检测中文字符比例
+            chinese_chars = sum(1 for c in meaning if '\u4e00' <= c <= '\u9fff')
+            total_chars = len(meaning)
+            chinese_ratio = chinese_chars / max(1, total_chars)
+            
+            # 根据中文比例调整每行字符估算
+            if chinese_ratio > 0.3:  # 中文为主
+                chars_per_visual_line = 42
+            elif chinese_ratio > 0.1:  # 中英混合
+                chars_per_visual_line = 60
+            else:  # 纯英文
+                chars_per_visual_line = 90
+            
+            # 计算每个显式行的实际换行数
+            total_visual_lines = 0
+            for line in meaning.split('\n'):
+                line_chars = len(line)
+                if line_chars == 0:
+                    total_visual_lines += 1  # 空行
+                else:
+                    total_visual_lines += max(1, (line_chars + chars_per_visual_line - 1) // chars_per_visual_line)
+            
+            line_height = 24  # 每行高度
+            padding = 8  # 上下padding
+            estimated_height = padding + total_visual_lines * line_height
+            m_box.configure(height=min(450, max(line_height + padding, estimated_height)))
 
         if example:
             if meaning:
-                ctk.CTkFrame(body, height=1, fg_color=("gray90", "gray35")).pack(fill="x", pady=10)
+                ctk.CTkFrame(body, height=1, fg_color=("gray90", "gray35")).pack(fill="x", pady=8)
 
             # 例句也使用自适应高度
-            e_box = ctk.CTkTextbox(body, font=("Microsoft YaHei UI", 13, "italic"), text_color=("gray40", "gray60"), fg_color="transparent", border_width=0, activate_scrollbars=False, wrap="word")
+            e_box = ctk.CTkTextbox(body, font=("Microsoft YaHei UI", 13), text_color=("gray30", "gray70"), fg_color="transparent", border_width=0, activate_scrollbars=False, wrap="word")
             e_box.pack(fill="x")
             e_box.insert("0.0", example)
             e_box.configure(state="disabled")
             self.bind_context_menu(e_box)
 
-            # 根据例句行数自适应高度
-            e_lines = example.count('\n') + 1
-            e_estimated_height = 40 + e_lines * 20
-            e_box.configure(height=min(250, max(50, e_estimated_height)))
+            # 例句高度计算
+            e_chars_per_line = 60  # 例句字体稍小
+            e_total_lines = 0
+            for line in example.split('\n'):
+                line_chars = len(line)
+                if line_chars == 0:
+                    e_total_lines += 1
+                else:
+                    e_total_lines += max(1, (line_chars + e_chars_per_line - 1) // e_chars_per_line)
+            
+            e_line_h = 22
+            e_pad = 8
+            e_estimated_height = e_pad + e_total_lines * e_line_h
+            e_box.configure(height=min(350, max(e_line_h + e_pad, e_estimated_height)))
 
     def on_show(self):
         """When showing, focus entry and show dashboard if empty"""

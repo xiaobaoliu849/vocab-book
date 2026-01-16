@@ -23,6 +23,7 @@ class CTkToolTip:
 
         self.widget.bind("<Enter>", self._on_enter, add="+")
         self.widget.bind("<Leave>", self._on_leave, add="+")
+        self.widget.bind("<Motion>", self._on_motion, add="+")
 
         # Hide tooltip when window is minimized/hidden
         root = self.widget.winfo_toplevel()
@@ -39,7 +40,15 @@ class CTkToolTip:
         self._entered = True
         self.x = event.x_root
         self.y = event.y_root
+        if self.id:
+            self.widget.after_cancel(self.id)
         self.id = self.widget.after(self.delay, self._show_tooltip)
+
+    def _on_motion(self, event=None):
+        """Update position when mouse moves over widget"""
+        if event:
+            self.x = event.x_root
+            self.y = event.y_root
 
     def _on_leave(self, event=None):
         self._entered = False
@@ -88,8 +97,54 @@ class CTkToolTip:
         ).pack()
 
         self._position_tooltip()
+        
+        # 启动定时检查，确保 tooltip 在鼠标离开后隐藏
+        self._start_check()
+
+    def _start_check(self):
+        """定时检查鼠标是否仍在 widget 上"""
+        if self._check_id:
+            self.widget.after_cancel(self._check_id)
+        self._check_id = self.widget.after(200, self._check_mouse_position)
+
+    def _check_mouse_position(self):
+        """检查鼠标位置，如果不在 widget 上则隐藏 tooltip"""
+        if not self.tooltip:
+            return
+        
+        try:
+            # 获取 widget 的屏幕坐标和尺寸
+            if not self.widget.winfo_exists():
+                self._hide_tooltip()
+                return
+                
+            wx = self.widget.winfo_rootx()
+            wy = self.widget.winfo_rooty()
+            ww = self.widget.winfo_width()
+            wh = self.widget.winfo_height()
+            
+            # 获取当前鼠标位置
+            mx = self.widget.winfo_pointerx()
+            my = self.widget.winfo_pointery()
+            
+            # 检查鼠标是否在 widget 范围内
+            if not (wx <= mx <= wx + ww and wy <= my <= wy + wh):
+                self._hide_tooltip()
+                return
+            
+            # 继续检查
+            self._check_id = self.widget.after(200, self._check_mouse_position)
+        except Exception:
+            self._hide_tooltip()
 
     def _hide_tooltip(self):
+        self._visible = False
+        if self._check_id:
+            try:
+                self.widget.after_cancel(self._check_id)
+            except:
+                pass
+            self._check_id = None
         if self.tooltip:
             try:
                 tooltip = self.tooltip
