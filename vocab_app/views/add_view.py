@@ -29,7 +29,7 @@ class AddView(BaseView):
 
         # 使用 grid 布局实现按比例扩展
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(2, weight=3)  # 释义区域权重3
+        self.grid_rowconfigure(2, weight=5)  # 释义区域权重5
         self.grid_rowconfigure(3, weight=1)  # 来源语境区域权重1
 
         # Row 0: 搜索栏
@@ -60,34 +60,69 @@ class AddView(BaseView):
         self.result_container.grid(row=2, column=0, sticky="nsew", pady=(5, 15), padx=5)
         
         # Row 3: 来源语境区域（权重1，扩展较少）
-        ctx_frame = ctk.CTkFrame(self, fg_color=("gray95", "gray20"), border_width=1, border_color=("gray85", "gray30"), corner_radius=10)
-        ctx_frame.grid(row=3, column=0, sticky="nsew", pady=(0, 20), padx=5)
+        # 优雅设计：单层卡片，无标签，用 placeholder 暗示
+        ctx_frame = ctk.CTkFrame(self, fg_color=("gray95", "#252525"),
+                                 border_width=1, border_color=("gray80", "#3a3a3a"), corner_radius=8)
+        ctx_frame.grid(row=3, column=0, sticky="nsew", pady=(0, 15), padx=5)
 
+        # 标题栏
         head_frame = ctk.CTkFrame(ctx_frame, fg_color="transparent")
-        head_frame.pack(fill="x", padx=15, pady=10)
-        ctk.CTkLabel(head_frame, text="✍️ 来源语境 (粘贴原句)", font=("Microsoft YaHei UI", 14, "bold"), text_color="#3B8ED0").pack(side="left")
+        head_frame.pack(fill="x", padx=12, pady=(10, 8))
+        ctk.CTkLabel(head_frame, text="✍️ 来源语境", font=("Microsoft YaHei UI", 13, "bold"),
+                     text_color=("gray20", "gray80")).pack(side="left")
 
-        self.btn_context_save = ctk.CTkButton(head_frame, text="💾 保存语境", width=100, height=30,
-                                            fg_color="#3B8ED0", font=("Microsoft YaHei UI", 13, "bold"),
-                                            command=self.save_context)
+        self.btn_context_save = ctk.CTkButton(head_frame, text="保存", width=55, height=26,
+                                              fg_color="#3B8ED0", font=("Microsoft YaHei UI", 11, "bold"),
+                                              command=self.save_context)
         self.btn_context_save.pack(side="right")
 
-        self.txt_context_en = ctk.CTkTextbox(ctx_frame, height=80, font=("Microsoft YaHei UI", 15), fg_color="transparent", border_width=0)
-        self.txt_context_en.pack(fill="x", padx=15, pady=(0, 5))
+        # 英文原句框 - 自适应高度
+        self.txt_context_en = ctk.CTkTextbox(ctx_frame, height=30, font=("Microsoft YaHei UI", 13),
+                                             fg_color="transparent", border_width=0)
+        self.txt_context_en.pack(fill="x", padx=12, pady=(0, 2))
+        self.txt_context_en.insert("0.0", "在此粘贴英文例句...")
+        self.txt_context_en.configure(text_color=("gray50", "gray60"))
+        self.txt_context_en.bind("<FocusIn>", self._on_en_focus)
+        self.txt_context_en.bind("<KeyRelease>", self._on_context_changed)
+        self.txt_context_en.bind("<FocusOut>", self._on_context_changed)
+        self.txt_context_en.bind("<Control-v>", self._on_context_changed)
 
-        line = ctk.CTkFrame(ctx_frame, height=1, fg_color="gray85")
-        line.pack(fill="x", padx=15, pady=5)
+        # 分隔线 - 更柔和
+        separator = ctk.CTkFrame(ctx_frame, height=1, fg_color=("gray75", "#3a3a3a"))
+        separator.pack(fill="x", padx=12, pady=4)
 
-        self.txt_context_cn = ctk.CTkTextbox(ctx_frame, height=60, font=("Microsoft YaHei UI", 14), text_color=("gray30", "gray70"), fg_color="transparent", border_width=0)
-        self.txt_context_cn.pack(fill="x", padx=15, pady=(0, 15))
-        self.txt_context_cn.insert("0.0", "待粘贴例句... (自动翻译)")
+        # 中文翻译框 - 自适应高度，初始只读状态
+        self.txt_context_cn = ctk.CTkTextbox(ctx_frame, height=30, font=("Microsoft YaHei UI", 13),
+                                             text_color=("gray50", "gray60"), fg_color="transparent", border_width=0)
+        self.txt_context_cn.pack(fill="x", padx=12, pady=(0, 8))
+        self.txt_context_cn.insert("0.0", "中文翻译将自动显示在此")
         self.txt_context_cn.configure(state="disabled")
 
         self.translate_timer = None
         self.last_translated_text = ""
-        self.txt_context_en.bind("<KeyRelease>", self.schedule_translation)
-        self.txt_context_en.bind("<FocusOut>", self.schedule_translation)
-        self.txt_context_en.bind("<Control-v>", self.schedule_translation)
+
+    def _on_context_changed(self, event=None):
+        """监听英文框内容变化，自适应高度"""
+        self._adjust_textbox_height(self.txt_context_en)
+        self.schedule_translation()
+
+    def _on_en_focus(self, event=None):
+        """英文框获得焦点时清除 placeholder"""
+        text = self.txt_context_en.get("0.0", "end").strip()
+        if text == "在此粘贴英文例句...":
+            self.txt_context_en.delete("0.0", "end")
+            self.txt_context_en.configure(text_color=("gray20", "gray80"))
+
+    def _adjust_textbox_height(self, textbox, min_height=35, max_height=120):
+        """根据内容行数自适应调整 Textbox 高度"""
+        content = textbox.get("0.0", "end").strip()
+        if not content:
+            textbox.configure(height=min_height)
+            return
+
+        lines = content.count('\n') + 1
+        new_height = min(max_height, max(min_height, lines * 20 + 8))
+        textbox.configure(height=new_height)
 
     def schedule_translation(self, event=None):
         if self.translate_timer:

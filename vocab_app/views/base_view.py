@@ -23,8 +23,7 @@ class CTkToolTip:
 
         self.widget.bind("<Enter>", self._on_enter, add="+")
         self.widget.bind("<Leave>", self._on_leave, add="+")
-        self.widget.bind("<Motion>", self._on_motion, add="+")
-        
+
         # Hide tooltip when window is minimized/hidden
         root = self.widget.winfo_toplevel()
         root.bind("<Unmap>", self._on_window_hide, add="+")
@@ -32,31 +31,40 @@ class CTkToolTip:
         self.tooltip = None
         self.id = None
         self.x = self.y = 0
+        self._entered = False
+        self._visible = False
+        self._check_id = None
 
     def _on_enter(self, event=None):
+        self._entered = True
+        self.x = event.x_root
+        self.y = event.y_root
         self.id = self.widget.after(self.delay, self._show_tooltip)
 
     def _on_leave(self, event=None):
+        self._entered = False
         if self.id:
             self.widget.after_cancel(self.id)
             self.id = None
+        # 停止检查并立即隐藏
+        if self._check_id:
+            self.widget.after_cancel(self._check_id)
+            self._check_id = None
         self._hide_tooltip()
 
-    def _on_motion(self, event=None):
-        self.x = event.x_root
-        self.y = event.y_root
-        if self.tooltip:
-            self._position_tooltip()
-
     def _show_tooltip(self):
+        # Check if mouse is still over widget before showing
+        if not self._entered:
+            return
+
         if self.tooltip:
             return
 
+        self._visible = True
         root = self.widget.winfo_toplevel()
         self.tooltip = ctk.CTkToplevel(self.widget)
         self.tooltip.overrideredirect(True)
         self.tooltip.attributes("-topmost", True)
-        # Make tooltip follow the main window (hide when minimized)
         self.tooltip.transient(root)
 
         # Get colors based on theme
@@ -83,8 +91,12 @@ class CTkToolTip:
 
     def _hide_tooltip(self):
         if self.tooltip:
-            self.tooltip.destroy()
-            self.tooltip = None
+            try:
+                tooltip = self.tooltip
+                self.tooltip = None  # Set to None FIRST to prevent race conditions
+                tooltip.destroy()
+            except Exception:
+                pass
 
     def _position_tooltip(self):
         if self.tooltip:

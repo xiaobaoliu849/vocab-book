@@ -466,7 +466,7 @@ class SettingsView(BaseView):
 
         self.btn_donate = ctk.CTkButton(
             card, text="☕ 请我喝杯咖啡", height=50, font=("Microsoft YaHei UI", 16, "bold"),
-            fg_color=("#FF6B6B", "#C92A2A"), hover_color=("#FF5252", "#B71C1C"), corner_radius=12,
+            fg_color=("#E67E22", "#D35400"), hover_color=("#E67E22", "#D35400"), corner_radius=12,
             command=self.toggle_donate_qr
         )
         self.btn_donate.pack(fill="x", padx=20, pady=(0, 10))

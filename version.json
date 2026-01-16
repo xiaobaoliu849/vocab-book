@@ -1,5 +1,5 @@
 {
-  "version": "3.3",
+  "version": "1.0",
   "download_url": "https://github.com/xiaobaoliu849/vocab-book/releases",
-  "changelog": "## v3.3 Bug Fixes\n- 修复删除单词功能\n- 修复线程竞态问题\n- 修复数据库连接泄漏\n- 增强异常处理保护"
+  "changelog": "## v1.0 正式版\n- 全新 Tooltip 悬浮提示组件，鼠标悬停显示功能说明\n- 优化捐赠按钮视觉设计\n- UI 细节打磨与体验优化"
 }
