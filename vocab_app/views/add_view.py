@@ -207,7 +207,14 @@ class AddView(BaseView):
         # 1. 先获取有道结果 (保留原有的丰富数据: tags, roots, families)
         youdao_result = DictService.search_word(word)
 
-        # 2. 并发查询其他词典
+        # 2. 检查有道结果是否完整，如果完整则跳过其他词典查询以加快速度
+        agg_results = None
+        if youdao_result and youdao_result.get('meaning') and youdao_result.get('example'):
+            # 有道已有完整释义和例句，只使用有道数据，跳过其他词典查询
+            self.after(0, lambda: self._use_youdao_only(youdao_result, word))
+            return
+
+        # 3. 并发查询其他词典（有道数据不完整时）
         agg_results = MultiDictService.aggregate_search(word, youdao_result=youdao_result)
         
         # 3. 确定主要结果 (优先使用有道，如果没有则取其他有的)
@@ -284,6 +291,56 @@ class AddView(BaseView):
             self.after(0, lambda: self.search_complete(display, "✅ 已保存", word, agg_results=agg_results))
         else:
             self.after(0, lambda: self.search_complete(None, "未找到该单词", None))
+
+    def _use_youdao_only(self, youdao_result, word):
+        """当有道数据完整时，直接使用有道数据，跳过其他词典查询"""
+        # 构建显示内容
+        phonetic = youdao_result.get('phonetic', '')
+        meaning = youdao_result.get('meaning', '')
+        example = youdao_result.get('example', '')
+
+        display_parts = []
+        display_parts.append(f"{word}  {phonetic}")
+        display_parts.append("-" * 30)
+        display_parts.append(f"[释义]\n{meaning}")
+        display_parts.append("-" * 30)
+        display_parts.append(f"[例句]\n{example}")
+        display = "\n".join(display_parts)
+
+        # 准备保存数据
+        save_data = youdao_result.copy()
+        save_data['phonetic'] = phonetic
+        save_data['meaning'] = meaning
+        save_data['example'] = example
+        if 'date' not in save_data:
+            save_data['date'] = datetime.now().strftime('%Y-%m-%d')
+
+        # 保存到数据库
+        self.controller.db.add_word(save_data)
+        self.controller.reload_vocab_list()
+
+        # 保存派生词关联
+        word_families = save_data.get('word_families', [])
+        for family in word_families:
+            root = family.get('root', '')
+            root_meaning = family.get('meaning', '')
+            derivatives = family.get('derivatives', [])
+            if root and derivatives:
+                all_words = [word] + derivatives
+                self.controller.db.add_word_families_batch(root, root_meaning, all_words)
+
+        # 构建 agg_results 格式供 search_complete 使用
+        agg_results = {
+            "primary": youdao_result,
+            "sources": {
+                MultiDictService.DICT_YOUDAO: {
+                    "source": MultiDictService.DICT_YOUDAO,
+                    "source_name": MultiDictService.DICT_NAMES[MultiDictService.DICT_YOUDAO],
+                    **youdao_result
+                }
+            }
+        }
+        self.search_complete(display, "✅ 已保存 (有道)", word, agg_results=agg_results)
 
     def display_existing_word(self, item, text=None):
         self.btn_search.configure(state="normal")
@@ -400,41 +457,46 @@ class AddView(BaseView):
     def _create_source_card(self, source_name, meaning, example="", icon="📚"):
         card = ctk.CTkFrame(self.result_container, fg_color=("white", "gray25"), corner_radius=12, border_width=1, border_color=("gray90", "gray30"))
         card.pack(fill="x", pady=8, padx=5)
-        
+
         # 头部：词典源名称
         header = ctk.CTkFrame(card, fg_color=("gray95", "#333333"), height=35, corner_radius=0)
         header.pack(fill="x")
         ctk.CTkLabel(header, text=f"{icon} {source_name}", font=("Microsoft YaHei UI", 13, "bold"), text_color=("gray20", "gray80")).pack(side="left", padx=15)
-        
+
         # 内容区域
         body = ctk.CTkFrame(card, fg_color="transparent")
         body.pack(fill="x", padx=20, pady=15)
-        
+
         if meaning:
-            # 使用 Textbox 显示释义，以支持选择和复制
-            m_box = ctk.CTkTextbox(body, height=100, font=("Microsoft YaHei UI", 14), fg_color="transparent", border_width=0, activate_scrollbars=False)
+            # 使用 Textbox 显示释义，支持选择和复制，高度自适应
+            m_box = ctk.CTkTextbox(body, font=("Microsoft YaHei UI", 14), fg_color="transparent", border_width=0, activate_scrollbars=False, wrap="word")
             m_box.pack(fill="x")
             m_box.insert("0.0", meaning)
             m_box.configure(state="disabled")
             self.bind_context_menu(m_box)
-            
-            # 自适应高度 (估算)
+
+            # 根据内容行数自适应高度
             lines = meaning.count('\n') + 1
-            m_box.configure(height=min(300, max(40, lines * 25)))
+            base_height = 30  # 基础高度
+            line_height = 22  # 每行高度
+            estimated_height = base_height + lines * line_height
+            m_box.configure(height=min(400, max(60, estimated_height)))
 
         if example:
             if meaning:
                 ctk.CTkFrame(body, height=1, fg_color=("gray90", "gray35")).pack(fill="x", pady=10)
-            
-            e_box = ctk.CTkTextbox(body, height=80, font=("Microsoft YaHei UI", 13, "italic"), text_color=("gray40", "gray60"), fg_color="transparent", border_width=0, activate_scrollbars=False)
+
+            # 例句也使用自适应高度
+            e_box = ctk.CTkTextbox(body, font=("Microsoft YaHei UI", 13, "italic"), text_color=("gray40", "gray60"), fg_color="transparent", border_width=0, activate_scrollbars=False, wrap="word")
             e_box.pack(fill="x")
             e_box.insert("0.0", example)
             e_box.configure(state="disabled")
             self.bind_context_menu(e_box)
-            
-            # 自适应高度
+
+            # 根据例句行数自适应高度
             e_lines = example.count('\n') + 1
-            e_box.configure(height=min(200, max(40, e_lines * 22)))
+            e_estimated_height = 40 + e_lines * 20
+            e_box.configure(height=min(250, max(50, e_estimated_height)))
 
     def on_show(self):
         """When showing, focus entry and show dashboard if empty"""
