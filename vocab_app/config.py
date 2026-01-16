@@ -24,8 +24,18 @@ FONT_NORMAL = ("Microsoft YaHei UI", 15)
 FONT_BOLD = ("Microsoft YaHei UI", 15, "bold")
 FONT_LARGE = ("Microsoft YaHei UI", 28, "bold")
 
-# App Version
-APP_VERSION = "3.1"
+# App Version - 从 version.json 读取
+APP_VERSION = "1.0"
+_version_file = os.path.join(BASE_DIR, 'version.json')
+if os.path.exists(_version_file):
+    try:
+        with open(_version_file, 'r', encoding='utf-8') as f:
+            _version_data = json.load(f)
+            APP_VERSION = _version_data.get("version", "1.0")
+            del _version_data
+    except Exception:
+        pass
+    del _version_file
 
 def init_resources():
     """Ensure necessary directories exist"""

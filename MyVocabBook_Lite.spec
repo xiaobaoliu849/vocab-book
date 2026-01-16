@@ -10,6 +10,7 @@ datas = [
     ('config.json', '.'),
     ('app.ico', '.'),
     ('app.png', '.'),
+    ('donate_qr.png', '.'),
 ]
 
 binaries = []
