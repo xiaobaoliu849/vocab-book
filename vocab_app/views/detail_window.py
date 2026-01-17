@@ -5,7 +5,6 @@ import threading
 from datetime import datetime
 from ..services.audio_service import AudioService
 from ..services.word_family_service import WordFamilyService
-from ..services.multi_dict_service import MultiDictService
 from ..config import FONT_NORMAL
 import webbrowser
 
@@ -160,8 +159,6 @@ class DetailWindow(ctk.CTkToplevel):
         self.content_container.pack(fill="x")
 
         # Fixed position containers
-        self.multi_dict_section = ctk.CTkFrame(self.scroll, fg_color="transparent")
-        self.multi_dict_section.pack(fill="x")
 
         self.word_family_section = ctk.CTkFrame(self.scroll, fg_color="transparent")
         self.word_family_section.pack(fill="x")
@@ -197,7 +194,6 @@ class DetailWindow(ctk.CTkToplevel):
 
         # 2. Clear Containers
         for widget in self.content_container.winfo_children(): widget.destroy()
-        for widget in self.multi_dict_section.winfo_children(): widget.destroy()
         for widget in self.word_family_section.winfo_children(): widget.destroy()
         for widget in self.stats_section.winfo_children(): widget.destroy()
 
@@ -225,19 +221,9 @@ class DetailWindow(ctk.CTkToplevel):
         if not hasattr(self, 'footer'):
             self.setup_footer()
 
-        # 5. Populate Async Sections (Containers are already in fixed order)
-        self.add_section_header(self.multi_dict_section, "📚 聚合词典详情")
-        self.multi_dict_container = ctk.CTkFrame(self.multi_dict_section, fg_color="transparent")
-        self.multi_dict_container.pack(fill="x", pady=(5, 10))
-        self.multi_dict_loading = ctk.CTkLabel(self.multi_dict_container, text="⏳ 检索增强中...", font=("Microsoft YaHei UI", 12), text_color="gray")
-        self.multi_dict_loading.pack(pady=10)
-
+        # 5. Populate Sections
         self.setup_word_family_section(self.word_family_section)
         self.setup_stats_dashboard(self.stats_section)
-
-        # 6. Kick off Background Tasks
-        self.multi_dict_frames = {}
-        self.load_multi_dict_results()
 
     def prev_word(self):
         if self.current_index > 0:
@@ -276,25 +262,86 @@ class DetailWindow(ctk.CTkToplevel):
         ).pack(side="left", expand=True, padx=8)
 
     def create_selectable_text(self, parent, text, font_size, width_chars, color=None):
-        """使用 CTkLabel 显示文本，简单稳定"""
+        """可选择文本控件，支持复制，自适应高度"""
+        import tkinter.font as tkfont
+        
         text = text.strip()
         text = re.sub(r'\.([a-zA-Z])', r'. \1', text)
         
         if not text:
             text = " "
         
-        # 使用 CTkLabel，简单稳定
-        label = ctk.CTkLabel(
+        font_tuple = ("Microsoft YaHei UI", font_size)
+        
+        # 预估高度
+        try:
+            font = tkfont.Font(family="Microsoft YaHei UI", size=font_size)
+            avg_char_width = font.measure("中") // 2 + 1
+        except:
+            avg_char_width = font_size
+        
+        container_width = 500
+        
+        # 计算预估行数
+        total_lines = 0
+        for paragraph in text.split('\n'):
+            if not paragraph.strip():
+                total_lines += 1
+                continue
+            char_count = sum(2 if ord(c) > 127 else 1 for c in paragraph)
+            text_width = char_count * avg_char_width // 2
+            lines_needed = max(1, (text_width // container_width) + 1)
+            total_lines += lines_needed
+        
+        # 行高：字体大小 * 2.0（宽松，确保不压字）
+        line_height = int(font_size * 2.0)
+        initial_height = max(total_lines * line_height + 12, 32)
+        
+        # 创建 CTkTextbox
+        textbox = ctk.CTkTextbox(
             parent,
-            text=text,
-            font=("Microsoft YaHei UI", font_size),
+            font=font_tuple,
             text_color=color if color else ("gray20", "gray80"),
-            anchor="nw",
-            justify="left",
-            wraplength=480  # 适合详情页宽度
+            fg_color="transparent",
+            border_width=0,
+            corner_radius=0,
+            wrap="word",
+            height=initial_height,
+            activate_scrollbars=False
         )
         
-        return label
+        # 插入文本并设为只读
+        textbox.insert("1.0", text)
+        textbox.configure(state="disabled")
+        
+        # 绑定右键菜单
+        self.bind_context_menu(textbox)
+        
+        # 延迟调整：只允许向上扩展，防止截断
+        def ensure_no_truncation():
+            try:
+                if not textbox.winfo_exists():
+                    return
+                inner_text = textbox._textbox
+                inner_text.update_idletasks()
+                
+                try:
+                    result = inner_text.count("1.0", "end-1c", "displaylines")
+                    if result:
+                        actual_lines = result[0] if isinstance(result, tuple) else result
+                        needed_height = actual_lines * line_height + 14
+                        # 只允许向上调整，确保不截断
+                        if needed_height > initial_height:
+                            textbox.configure(height=needed_height)
+                except:
+                    pass
+            except:
+                pass
+        
+        textbox.after(100, ensure_no_truncation)
+        textbox.after(250, ensure_no_truncation)
+        
+        return textbox
 
     def create_content_card(self, parent, title, content, accent_color):
         """紧凑卡片布局"""
@@ -317,7 +364,7 @@ class DetailWindow(ctk.CTkToplevel):
         
         # 内容
         content_label = self.create_selectable_text(inner, content, 13, 50)
-        content_label.grid(row=1, column=1, sticky="w", pady=(4, 0))
+        content_label.grid(row=1, column=1, sticky="ew", pady=(4, 0))
 
     def create_small_card(self, parent, title, content, column, color):
         card = ctk.CTkFrame(parent, fg_color=("white", "#2b2b2b"), corner_radius=12, border_width=1, border_color=("gray90", "gray30"))
@@ -386,6 +433,8 @@ class DetailWindow(ctk.CTkToplevel):
         """显示派生词群组"""
         families = data.get('families', [])
         if not families:
+            # 没有派生词时隐藏整个 section
+            parent.pack_forget()
             return
 
         self.add_section_header(parent, "🌳 派生词群组")
@@ -587,187 +636,3 @@ class DetailWindow(ctk.CTkToplevel):
                 self.controller.frames["list"].refresh_list()
             self.destroy()
 
-    def load_multi_dict_results(self):
-        """在后台线程中查询多词典"""
-        current_word = self.item['word']
-        
-        def query_dicts():
-            try:
-                # 获取启用的词典
-                config = self.controller.config
-                dict_sources = config.get("dict_sources", {
-                    "youdao": True,
-                    "bing": True,
-                    "freedict": True
-                })
-
-                enabled = [k for k, v in dict_sources.items() if v and k != "youdao"]
-
-                if not enabled:
-                    self.after(0, self.hide_multi_dict_loading)
-                    return
-
-                # 查询 Bing 和 Free Dictionary
-                results = {}
-
-                if "bing" in enabled:
-                    bing_result = MultiDictService.search_bing(current_word)
-                    if bing_result:
-                        results["bing"] = bing_result
-
-                if "freedict" in enabled:
-                    free_result = MultiDictService.search_free_dict(current_word)
-                    if free_result:
-                        results["freedict"] = free_result
-
-                # 更新UI前检查窗口是否存在且单词依然匹配
-                if self.winfo_exists() and self.item['word'] == current_word:
-                    self.after(0, lambda: self.display_multi_dict_results(results))
-
-            except Exception as e:
-                print(f"Multi-dict query error: {e}")
-                if self.winfo_exists() and self.item['word'] == current_word:
-                    self.after(0, self.hide_multi_dict_loading)
-
-        threading.Thread(target=query_dicts, daemon=True).start()
-
-    def hide_multi_dict_loading(self):
-        """隐藏加载提示"""
-        if hasattr(self, 'multi_dict_loading') and self.multi_dict_loading.winfo_exists():
-            self.multi_dict_loading.configure(text="暂无其他词典结果")
-
-    def display_multi_dict_results(self, results):
-        """显示多词典查询结果"""
-        if not hasattr(self, 'multi_dict_loading') or not self.multi_dict_loading.winfo_exists():
-            return
-
-        # 隐藏加载提示
-        self.multi_dict_loading.pack_forget()
-
-        if not results:
-            no_result_label = ctk.CTkLabel(
-                self.multi_dict_container,
-                text="未找到其他词典结果",
-                font=("Microsoft YaHei UI", 12),
-                text_color="gray"
-            )
-            no_result_label.pack(pady=10)
-            return
-
-        # 显示每个词典的结果
-        for source, data in results.items():
-            self.create_dict_block(source, data)
-
-    def create_dict_block(self, source, data):
-        """创建现代化的可折叠词典区块"""
-        source_name = data.get('source_name', source)
-
-        # 词典颜色配置 (Enhanced contrast for modern theme)
-        colors = {
-            "bing": {"bg": ("#E3F2FD", "#102a43"), "header": ("#0062cc", "#64B5F6"), "icon": "🔷"},
-            "freedict": {"bg": ("#F3E5F5", "#2a1535"), "header": ("#7B1FA2", "#CE93D8"), "icon": "⚛️"},
-            "youdao": {"bg": ("#E8F5E9", "#0e2f10"), "header": ("#2E7D32", "#81C784"), "icon": "🍏"},
-        }
-        color = colors.get(source, {"bg": ("#F5F5F5", "#242424"), "header": ("#757575", "#BDBDBD"), "icon": "📁"})
-
-        # 外层容器
-        block = ctk.CTkFrame(
-            self.multi_dict_container,
-            fg_color=color["bg"],
-            corner_radius=12,
-            border_width=1,
-            border_color=("gray90", "gray20")
-        )
-        block.pack(fill="x", pady=6)
-
-        # 头部（可点击折叠）
-        header = ctk.CTkFrame(block, fg_color="transparent", cursor="hand2", height=44)
-        header.pack(fill="x", padx=12, pady=5)
-        header.pack_propagate(False)
-
-        # 展开/折叠指示
-        expand_label = ctk.CTkLabel(
-            header, text="▼", font=("Arial", 14), text_color=color["header"]
-        )
-        expand_label.pack(side="left", padx=(5, 10))
-
-        # 词典名称
-        ctk.CTkLabel(
-            header,
-            text=f"{color['icon']} {source_name}",
-            font=("Microsoft YaHei UI", 13, "bold"),
-            text_color=color["header"]
-        ).pack(side="left")
-
-        # 音标覆盖项
-        if data.get('phonetic'):
-            ctk.CTkLabel(
-                header, text=f"/{data['phonetic']}/", 
-                font=("Arial", 11), text_color="gray"
-            ).pack(side="left", padx=15)
-
-        # 内容区域
-        content_frame = ctk.CTkFrame(block, fg_color="transparent")
-        content_frame.pack(fill="x", padx=15, pady=(0, 15))
-
-        # 释义区域 (Selectable Textbox with hidden scrollbar)
-        if data.get('meaning'):
-            m_text = data['meaning'].strip()
-            self.create_selectable_text(content_frame, m_text, 12, 42).pack(fill="x", pady=5, padx=2)
-
-        # 例句 (Selectable Textbox)
-        if data.get('example'):
-            ex_frame = ctk.CTkFrame(content_frame, fg_color="transparent")
-            ex_frame.pack(fill="x", pady=4)
-            
-            ctk.CTkLabel(
-                ex_frame, text="💬 典型用例:", font=("Microsoft YaHei UI", 11, "bold"), 
-                text_color="gray50"
-            ).pack(anchor="w")
-            
-            ex_text = data['example'].strip()
-            self.create_selectable_text(ex_frame, ex_text, 12, 48).pack(fill="x", padx=10, pady=2)
-
-        # 其他元数据 (Selectable)
-        meta_parts = []
-        if data.get('forms'): meta_parts.append(f"形态: {data['forms']}")
-        if data.get('collocations'): meta_parts.append(f"搭配: {data['collocations']}")
-        if data.get('synonyms'): meta_parts.append(f"近义: {data['synonyms']}")
-        
-        if meta_parts:
-            meta_text = "  •  ".join(meta_parts)
-            self.create_selectable_text(content_frame, meta_text, 11, 55, color="gray60").pack(fill="x", pady=(5, 0), padx=5)
-
-        # 存储引用
-        self.multi_dict_frames[source] = {
-            "block": block,
-            "content": content_frame,
-            "expand_label": expand_label,
-            "expanded": True
-        }
-
-        # 绑定点击折叠事件
-        def toggle_block(e, src=source):
-            self.toggle_dict_block(src)
-
-        header.bind("<Button-1>", toggle_block)
-        for child in header.winfo_children():
-            child.bind("<Button-1>", toggle_block)
-
-    def toggle_dict_block(self, source):
-        """切换词典区块的展开/折叠状态"""
-        if source not in self.multi_dict_frames:
-            return
-
-        frame_data = self.multi_dict_frames[source]
-        content = frame_data["content"]
-        expand_label = frame_data["expand_label"]
-
-        if frame_data["expanded"]:
-            content.pack_forget()
-            expand_label.configure(text="▶")
-            frame_data["expanded"] = False
-        else:
-            content.pack(fill="x", padx=15, pady=(0, 10))
-            expand_label.configure(text="▼")
-            frame_data["expanded"] = True

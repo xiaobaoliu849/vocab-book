@@ -17,7 +17,7 @@ def _get_clean_text(el):
 
 
 class MultiDictService:
-    """多词典聚合查询服务"""
+    """多词典聚合查询服务（带缓存）"""
 
     # 词典源标识
     DICT_YOUDAO = "youdao"
@@ -32,6 +32,35 @@ class MultiDictService:
         DICT_BING: "Bing 词典",
         DICT_FREE: "Free Dictionary",
     }
+    
+    # 全局缓存：{word: {"bing": result, "freedict": result, "timestamp": time}}
+    _cache = {}
+    _cache_ttl = 1800  # 缓存有效期 30 分钟
+    
+    @classmethod
+    def get_cached(cls, word, source):
+        """获取缓存的词典结果"""
+        import time
+        word_lower = word.lower()
+        if word_lower in cls._cache:
+            cache_entry = cls._cache[word_lower]
+            # 检查是否过期
+            if time.time() - cache_entry.get("timestamp", 0) < cls._cache_ttl:
+                return cache_entry.get(source)
+            else:
+                # 清除过期缓存
+                del cls._cache[word_lower]
+        return None
+    
+    @classmethod
+    def set_cache(cls, word, source, result):
+        """设置缓存"""
+        import time
+        word_lower = word.lower()
+        if word_lower not in cls._cache:
+            cls._cache[word_lower] = {"timestamp": time.time()}
+        cls._cache[word_lower][source] = result
+        cls._cache[word_lower]["timestamp"] = time.time()
 
     @staticmethod
     def search_cambridge(word):
