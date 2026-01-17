@@ -1,5 +1,5 @@
 {
-  "version": "1.0",
+  "version": "1.1",
   "download_url": "https://github.com/xiaobaoliu849/vocab-book/releases",
-  "changelog": "## v1.0 正式版\n- 全新 Tooltip 悬浮提示组件，鼠标悬停显示功能说明\n- 优化捐赠按钮视觉设计\n- UI 细节打磨与体验优化"
+  "changelog": "## v1.1\n- 详情页布局优化，视觉效果更佳\n- Tooltip悬浮提示修复\n- Bing词典空格问题修复\n- 有道数据完整时跳过其他词典查询，提升性能\n- 卡片高度自适应\n\n## v1.0 正式版\n- 全新 Tooltip 悬浮提示组件，鼠标悬停显示功能说明\n- 优化捐赠按钮视觉设计\n- UI 细节打磨与体验优化"
 }
