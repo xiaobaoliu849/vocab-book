@@ -1,5 +1,5 @@
 {
-  "version": "1.1",
+  "version": "1.2",
   "download_url": "https://github.com/xiaobaoliu849/vocab-book/releases",
-  "changelog": "## v1.1\n- 详情页布局优化，视觉效果更佳\n- Tooltip悬浮提示修复\n- Bing词典空格问题修复\n- 有道数据完整时跳过其他词典查询，提升性能\n- 卡片高度自适应\n\n## v1.0 正式版\n- 全新 Tooltip 悬浮提示组件，鼠标悬停显示功能说明\n- 优化捐赠按钮视觉设计\n- UI 细节打磨与体验优化"
+  "changelog": "## v1.2\n- 数据库连接优化：使用线程本地长连接 + WAL 模式\n- 列表搜索优化：改用 SQLite LIKE 查询\n- 网络请求优化：requests.Session() 连接复用\n- Tooltip 修复：彻底解决残留问题\n- 拼写检查可点击跳过延迟\n- 词典服务增加索引越界保护\n\n## v1.1\n- 详情页布局优化，视觉效果更佳\n- Tooltip悬浮提示修复\n- Bing词典空格问题修复\n- 有道数据完整时跳过其他词典查询，提升性能\n- 卡片高度自适应\n\n## v1.0 正式版\n- 全新 Tooltip 悬浮提示组件，鼠标悬停显示功能说明\n- 优化捐赠按钮视觉设计\n- UI 细节打磨与体验优化"
 }

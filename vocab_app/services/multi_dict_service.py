@@ -8,6 +8,32 @@ from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
+# 全局共享 Session，复用 TCP 连接，提升性能
+_session = None
+
+def get_session():
+    """获取共享的 requests Session"""
+    global _session
+    if _session is None:
+        _session = requests.Session()
+        _session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+        })
+        # 配置连接池大小
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=10,
+            pool_maxsize=20,
+            max_retries=2
+        )
+        _session.mount('http://', adapter)
+        _session.mount('https://', adapter)
+    return _session
+
+
 def _get_clean_text(el):
     """Helper to safely extract clean text from a BeautifulSoup element."""
     if not el:
@@ -70,11 +96,8 @@ class MultiDictService:
         try:
             # 剑桥词典 URL (English-Chinese Simplified)
             url = f"https://dictionary.cambridge.org/dictionary/english-chinese-simplified/{word}"
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7'
-            }
-            resp = requests.get(url, headers=headers, timeout=10)
+            session = get_session()
+            resp = session.get(url, timeout=10)
 
             if resp.status_code != 200:
                 return None
@@ -153,11 +176,8 @@ class MultiDictService:
         try:
             # 使用 mkt=zh-cn 强制中文版，setlang 备用
             url = f"https://cn.bing.com/dict/search?q={word}&mkt=zh-cn&setlang=zh-hans"
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-            }
-            resp = requests.get(url, headers=headers, timeout=8)
+            session = get_session()
+            resp = session.get(url, timeout=8)
 
             if resp.status_code != 200:
                 return None
@@ -211,7 +231,8 @@ class MultiDictService:
         """Free Dictionary API 查询"""
         try:
             url = f"https://api.dictionaryapi.dev/api/v2/entries/en/{word}"
-            resp = requests.get(url, timeout=8)
+            session = get_session()
+            resp = session.get(url, timeout=8)
 
             if resp.status_code != 200:
                 return None

@@ -2,18 +2,55 @@ import sqlite3
 import json
 import os
 import time
+import threading
 from datetime import datetime, timedelta
 
 class DatabaseManager:
+    """
+    SQLite 数据库管理器，使用线程本地存储的长连接。
+
+    优化策略：
+    - 每个线程维护一个独立的数据库连接（线程本地存储）
+    - 避免频繁创建/关闭连接的开销
+    - 线程安全，支持多线程环境（如词典查询线程）
+    """
+
     def __init__(self, db_path="vocab.db", json_path="vocab.json"):
         self.db_path = db_path
         self.json_path = json_path
+        self._local = threading.local()  # 线程本地存储
+        self._lock = threading.Lock()     # 用于初始化时的锁
+
         self.init_db()
         self.check_schema_updates()
         self.migrate_from_json()
 
     def get_connection(self):
-        return sqlite3.connect(self.db_path)
+        """
+        获取当前线程的数据库连接。
+        每个线程使用独立的连接，避免线程安全问题。
+        """
+        # 检查当前线程是否已有连接
+        conn = getattr(self._local, 'connection', None)
+
+        if conn is None:
+            # 当前线程没有连接，创建新连接
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            conn.execute("PRAGMA journal_mode=WAL")  # 使用 WAL 模式提升并发性能
+            conn.execute("PRAGMA synchronous=NORMAL")  # 平衡性能和安全
+            self._local.connection = conn
+
+        return conn
+
+    def close_connection(self):
+        """关闭当前线程的数据库连接。"""
+        conn = getattr(self._local, 'connection', None)
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            self._local.connection = None
 
     def execute(self, query, params=(), fetch=False, commit=True):
         """Helper to execute a single query with automatic connection handling."""
@@ -26,8 +63,19 @@ class DatabaseManager:
             if fetch:
                 return cursor.fetchall()
             return None
-        finally:
-            conn.close()
+        except sqlite3.Error as e:
+            # 连接可能已损坏，尝试重新连接
+            if "database is locked" in str(e) or "disk I/O error" in str(e):
+                self.close_connection()
+                conn = self.get_connection()
+                cursor = conn.cursor()
+                cursor.execute(query, params)
+                if commit:
+                    conn.commit()
+                if fetch:
+                    return cursor.fetchall()
+                return None
+            raise
 
     def execute_many(self, queries):
         """Execute multiple queries in a single transaction."""
@@ -37,8 +85,9 @@ class DatabaseManager:
             for query, params in queries:
                 cursor.execute(query, params)
             conn.commit()
-        finally:
-            conn.close()
+        except sqlite3.Error as e:
+            conn.rollback()
+            raise
 
     def init_db(self):
         """Initialize the database tables."""
@@ -104,7 +153,7 @@ class DatabaseManager:
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_word_families_word ON word_families(word)')
 
         conn.commit()
-        conn.close()
+        # 注意：不再关闭连接，使用长连接
 
     def check_schema_updates(self):
         """Check and update database schema for new columns."""
@@ -131,8 +180,7 @@ class DatabaseManager:
             conn.commit()
         except Exception as e:
             print(f"Schema update error: {e}")
-        finally:
-            conn.close()
+        # 注意：不再关闭连接，使用长连接
 
     def migrate_from_json(self):
         """Migrate data from vocab.json if DB is empty."""
@@ -145,7 +193,6 @@ class DatabaseManager:
         # Check if DB is empty
         cursor.execute('SELECT count(*) FROM words')
         if cursor.fetchone()[0] > 0:
-            conn.close()
             return # Already has data, skip migration
 
         print("Migrating data from JSON to SQLite...")
@@ -179,14 +226,13 @@ class DatabaseManager:
             
             conn.commit()
             print(f"Migration complete. {len(data)} words imported.")
-            
+
             # Optional: Rename json file to backup
             # os.rename(self.json_path, self.json_path + ".bak")
-            
+
         except Exception as e:
             print(f"Migration failed: {e}")
-        finally:
-            conn.close()
+        # 注意：不再关闭连接，使用长连接
 
     # --- CRUD Operations ---
 
@@ -213,72 +259,55 @@ class DatabaseManager:
             return True
         except sqlite3.IntegrityError:
             return False # Already exists
-        finally:
-            conn.close()
 
     def get_word(self, word):
         """Get a single word as dict."""
         conn = self.get_connection()
-        try:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute('SELECT * FROM words WHERE word = ?', (word,))
-            row = cursor.fetchone()
-            if row:
-                d = dict(row)
-                d['mastered'] = bool(d['mastered'])
-                d['date'] = d['date_added']
-                return d
-            return None
-        finally:
-            conn.close()
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM words WHERE word = ?', (word,))
+        row = cursor.fetchone()
+        if row:
+            d = dict(row)
+            d['mastered'] = bool(d['mastered'])
+            d['date'] = d['date_added']
+            return d
+        return None
 
     def get_all_words(self):
         """Get all words as list of dicts."""
         conn = self.get_connection()
-        try:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute('SELECT * FROM words ORDER BY next_review_time ASC')
-            rows = cursor.fetchall()
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM words ORDER BY next_review_time ASC')
+        rows = cursor.fetchall()
 
-            result = []
-            for row in rows:
-                d = dict(row)
-                d['mastered'] = bool(d['mastered'])
-                d['date'] = d['date_added']
-                result.append(d)
-            return result
-        finally:
-            conn.close()
+        result = []
+        for row in rows:
+            d = dict(row)
+            d['mastered'] = bool(d['mastered'])
+            d['date'] = d['date_added']
+            result.append(d)
+        return result
 
     def update_context(self, word, en, cn):
         conn = self.get_connection()
-        try:
-            cursor = conn.cursor()
-            cursor.execute('UPDATE words SET context_en = ?, context_cn = ? WHERE word = ?', (en, cn, word))
-            conn.commit()
-        finally:
-            conn.close()
+        cursor = conn.cursor()
+        cursor.execute('UPDATE words SET context_en = ?, context_cn = ? WHERE word = ?', (en, cn, word))
+        conn.commit()
 
     def delete_word(self, word):
         conn = self.get_connection()
-        try:
-            cursor = conn.cursor()
-            cursor.execute('DELETE FROM words WHERE word = ?', (word,))
-            conn.commit()
-        finally:
-            conn.close()
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM words WHERE word = ?', (word,))
+        conn.commit()
 
     def mark_word_mastered(self, word):
         """Mark a word as mastered."""
         conn = self.get_connection()
-        try:
-            cursor = conn.cursor()
-            cursor.execute('UPDATE words SET mastered = 1 WHERE word = ?', (word,))
-            conn.commit()
-        finally:
-            conn.close()
+        cursor = conn.cursor()
+        cursor.execute('UPDATE words SET mastered = 1 WHERE word = ?', (word,))
+        conn.commit()
 
     def update_review_status(self, word, stage, next_time, mastered, review_count_inc=True):
         """Update fields after a review."""
@@ -312,7 +341,6 @@ class DatabaseManager:
             cursor.execute('INSERT INTO review_history (word_id, review_date, rating) VALUES (?, ?, ?)', (wid, today, 1))
 
         conn.commit()
-        conn.close()
 
     def update_sm2_status(self, word, easiness, interval, repetitions, next_time, rating):
         """Update fields after a review using SM-2 algorithm."""
@@ -339,65 +367,56 @@ class DatabaseManager:
     def get_review_heatmap_data(self):
         """获取过去一年的复习热力图数据 {date: count}"""
         conn = self.get_connection()
-        try:
-            cursor = conn.cursor()
+        cursor = conn.cursor()
 
-            # 获取一年前的日期
-            one_year_ago = (datetime.now() - timedelta(days=366)).strftime('%Y-%m-%d')
+        # 获取一年前的日期
+        one_year_ago = (datetime.now() - timedelta(days=366)).strftime('%Y-%m-%d')
 
-            cursor.execute('''
-                SELECT review_date, COUNT(*)
-                FROM review_history
-                WHERE review_date >= ?
-                GROUP BY review_date
-            ''', (one_year_ago,))
+        cursor.execute('''
+            SELECT review_date, COUNT(*)
+            FROM review_history
+            WHERE review_date >= ?
+            GROUP BY review_date
+        ''', (one_year_ago,))
 
-            rows = cursor.fetchall()
-            return {row[0]: row[1] for row in rows}
-        finally:
-            conn.close()
+        rows = cursor.fetchall()
+        return {row[0]: row[1] for row in rows}
 
     def get_word_review_history(self, word_id):
         """Get review history for a specific word"""
         conn = self.get_connection()
-        try:
-            cursor = conn.cursor()
-            cursor.execute('SELECT review_date, rating FROM review_history WHERE word_id = ? ORDER BY review_date', (word_id,))
-            rows = cursor.fetchall()
-            return rows
-        finally:
-            conn.close()
+        cursor = conn.cursor()
+        cursor.execute('SELECT review_date, rating FROM review_history WHERE word_id = ? ORDER BY review_date', (word_id,))
+        rows = cursor.fetchall()
+        return rows
 
     def get_statistics(self):
         """获取学习统计信息"""
         conn = self.get_connection()
-        try:
-            cursor = conn.cursor()
+        cursor = conn.cursor()
 
-            # 总单词数
-            cursor.execute('SELECT COUNT(*) FROM words')
-            total = cursor.fetchone()[0]
+        # 总单词数
+        cursor.execute('SELECT COUNT(*) FROM words')
+        total = cursor.fetchone()[0]
 
-            # 已掌握数量
-            cursor.execute('SELECT COUNT(*) FROM words WHERE mastered = 1')
-            mastered = cursor.fetchone()[0]
+        # 已掌握数量
+        cursor.execute('SELECT COUNT(*) FROM words WHERE mastered = 1')
+        mastered = cursor.fetchone()[0]
 
-            # 今日待复习数量
-            now_ts = time.time()
-            cursor.execute('SELECT COUNT(*) FROM words WHERE mastered = 0 AND next_review_time <= ?', (now_ts,))
-            due_today = cursor.fetchone()[0]
+        # 今日待复习数量
+        now_ts = time.time()
+        cursor.execute('SELECT COUNT(*) FROM words WHERE mastered = 0 AND next_review_time <= ?', (now_ts,))
+        due_today = cursor.fetchone()[0]
 
-            # 学习中的单词
-            learning = total - mastered
+        # 学习中的单词
+        learning = total - mastered
 
-            return {
-                'total': total,
-                'mastered': mastered,
-                'learning': learning,
-                'due_today': due_today
-            }
-        finally:
-            conn.close()
+        return {
+            'total': total,
+            'mastered': mastered,
+            'learning': learning,
+            'due_today': due_today
+        }
 
     # --- Word Family Operations (派生词群组) ---
 
@@ -415,8 +434,6 @@ class DatabaseManager:
         except Exception as e:
             print(f"Add word family error: {e}")
             return False
-        finally:
-            conn.close()
 
     def add_word_families_batch(self, root, root_meaning, words):
         """Add multiple words to a word family."""
@@ -433,51 +450,122 @@ class DatabaseManager:
         except Exception as e:
             print(f"Add word families batch error: {e}")
             return False
-        finally:
-            conn.close()
 
     def get_word_family(self, word):
         """Get all words in the same family as the given word."""
         conn = self.get_connection()
-        try:
-            cursor = conn.cursor()
+        cursor = conn.cursor()
 
-            # First find the root(s) for this word
-            cursor.execute('SELECT DISTINCT root, root_meaning FROM word_families WHERE word = ?', (word.lower(),))
-            roots = cursor.fetchall()
+        # First find the root(s) for this word
+        cursor.execute('SELECT DISTINCT root, root_meaning FROM word_families WHERE word = ?', (word.lower(),))
+        roots = cursor.fetchall()
 
-            if not roots:
-                return []
+        if not roots:
+            return []
 
-            # Get all words that share these roots
-            result = []
-            for root, root_meaning in roots:
-                cursor.execute('''
-                    SELECT wf.word,
-                           CASE WHEN w.word IS NOT NULL THEN 1 ELSE 0 END as in_vocab
-                    FROM word_families wf
-                    LEFT JOIN words w ON LOWER(w.word) = wf.word
-                    WHERE wf.root = ?
-                    ORDER BY wf.word
-                ''', (root,))
-                family_words = cursor.fetchall()
-                result.append({
-                    'root': root,
-                    'root_meaning': root_meaning,
-                    'words': [{'word': w[0], 'in_vocab': bool(w[1])} for w in family_words if w[0] != word.lower()]
-                })
+        # Get all words that share these roots
+        result = []
+        for root, root_meaning in roots:
+            cursor.execute('''
+                SELECT wf.word,
+                       CASE WHEN w.word IS NOT NULL THEN 1 ELSE 0 END as in_vocab
+                FROM word_families wf
+                LEFT JOIN words w ON LOWER(w.word) = wf.word
+                WHERE wf.root = ?
+                ORDER BY wf.word
+            ''', (root,))
+            family_words = cursor.fetchall()
+            result.append({
+                'root': root,
+                'root_meaning': root_meaning,
+                'words': [{'word': w[0], 'in_vocab': bool(w[1])} for w in family_words if w[0] != word.lower()]
+            })
 
-            return result
-        finally:
-            conn.close()
+        return result
 
     def get_roots_for_word(self, word):
         """Get the roots associated with a word."""
         conn = self.get_connection()
-        try:
-            cursor = conn.cursor()
-            cursor.execute('SELECT root, root_meaning FROM word_families WHERE word = ?', (word.lower(),))
-            rows = cursor.fetchall()
-            return [{'root': r[0], 'meaning': r[1]} for r in rows]
-        finally:
-            conn.close()
+        cursor = conn.cursor()
+        cursor.execute('SELECT root, root_meaning FROM word_families WHERE word = ?', (word.lower(),))
+        rows = cursor.fetchall()
+        return [{'root': r[0], 'meaning': r[1]} for r in rows]
+
+    # --- 搜索与分页 (性能优化) ---
+
+    def search_words(self, keyword="", tag_filter="", mastered_filter=None, sort_by="next_review_time", sort_order="ASC", limit=50, offset=0):
+        """
+        在数据库层进行搜索和过滤，避免内存中遍历全部单词。
+
+        Args:
+            keyword: 搜索关键词（匹配 word 或 meaning）
+            tag_filter: 标签过滤（如 "CET4", "GRE"）
+            mastered_filter: 掌握状态过滤 (True/False/None)
+            sort_by: 排序字段
+            sort_order: 排序方向 (ASC/DESC)
+            limit: 返回数量限制
+            offset: 偏移量（用于分页）
+
+        Returns:
+            (list[dict], int): (单词列表, 总匹配数量)
+        """
+        conn = self.get_connection()
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        # 构建 WHERE 子句
+        conditions = []
+        params = []
+
+        if keyword:
+            conditions.append("(word LIKE ? OR meaning LIKE ?)")
+            like_pattern = f"%{keyword}%"
+            params.extend([like_pattern, like_pattern])
+
+        if tag_filter:
+            conditions.append("tags LIKE ?")
+            params.append(f"%{tag_filter}%")
+
+        if mastered_filter is not None:
+            conditions.append("mastered = ?")
+            params.append(1 if mastered_filter else 0)
+
+        where_clause = " AND ".join(conditions) if conditions else "1=1"
+
+        # 验证排序字段（防止 SQL 注入）
+        valid_sort_fields = {"word", "next_review_time", "date_added", "review_count", "mastered", "easiness", "interval"}
+        if sort_by not in valid_sort_fields:
+            sort_by = "next_review_time"
+        if sort_order.upper() not in ("ASC", "DESC"):
+            sort_order = "ASC"
+
+        # 查询总数
+        count_sql = f"SELECT COUNT(*) FROM words WHERE {where_clause}"
+        cursor.execute(count_sql, params)
+        total_count = cursor.fetchone()[0]
+
+        # 查询数据
+        query_sql = f"""
+            SELECT * FROM words
+            WHERE {where_clause}
+            ORDER BY {sort_by} {sort_order}
+            LIMIT ? OFFSET ?
+        """
+        cursor.execute(query_sql, params + [limit, offset])
+        rows = cursor.fetchall()
+
+        result = []
+        for row in rows:
+            d = dict(row)
+            d['mastered'] = bool(d['mastered'])
+            d['date'] = d['date_added']
+            result.append(d)
+
+        return result, total_count
+
+    def get_words_count(self):
+        """获取单词总数"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM words')
+        return cursor.fetchone()[0]

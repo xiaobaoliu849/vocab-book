@@ -24,10 +24,16 @@ class CTkToolTip:
         self.widget.bind("<Enter>", self._on_enter, add="+")
         self.widget.bind("<Leave>", self._on_leave, add="+")
         self.widget.bind("<Motion>", self._on_motion, add="+")
+        # 绑定 Button-1 点击事件，点击时隐藏 tooltip
+        self.widget.bind("<Button-1>", self._on_click, add="+")
 
-        # Hide tooltip when window is minimized/hidden
+        # Hide tooltip when window is minimized/hidden/loses focus
         root = self.widget.winfo_toplevel()
         root.bind("<Unmap>", self._on_window_hide, add="+")
+        root.bind("<FocusOut>", self._on_window_hide, add="+")
+
+        # 绑定 widget 的 Destroy 事件
+        self.widget.bind("<Destroy>", self._on_widget_destroy, add="+")
 
         self.tooltip = None
         self.id = None
@@ -35,13 +41,16 @@ class CTkToolTip:
         self._entered = False
         self._visible = False
         self._check_id = None
+        self._destroyed = False
 
     def _on_enter(self, event=None):
+        if self._destroyed:
+            return
         self._entered = True
-        self.x = event.x_root
-        self.y = event.y_root
-        if self.id:
-            self.widget.after_cancel(self.id)
+        if event:
+            self.x = event.x_root
+            self.y = event.y_root
+        self._cancel_scheduled_show()
         self.id = self.widget.after(self.delay, self._show_tooltip)
 
     def _on_motion(self, event=None):
@@ -52,99 +61,148 @@ class CTkToolTip:
 
     def _on_leave(self, event=None):
         self._entered = False
-        if self.id:
-            self.widget.after_cancel(self.id)
-            self.id = None
-        # 停止检查并立即隐藏
-        if self._check_id:
-            self.widget.after_cancel(self._check_id)
-            self._check_id = None
+        self._cancel_scheduled_show()
+        self._cancel_check()
         self._hide_tooltip()
 
+    def _on_click(self, event=None):
+        """点击时隐藏 tooltip"""
+        self._entered = False
+        self._cancel_scheduled_show()
+        self._cancel_check()
+        self._hide_tooltip()
+
+    def _on_widget_destroy(self, event=None):
+        """widget 被销毁时清理"""
+        self._destroyed = True
+        self._cancel_scheduled_show()
+        self._cancel_check()
+        self._hide_tooltip()
+
+    def _cancel_scheduled_show(self):
+        """取消已调度的显示"""
+        if self.id:
+            try:
+                self.widget.after_cancel(self.id)
+            except Exception:
+                pass
+            self.id = None
+
+    def _cancel_check(self):
+        """取消定时检查"""
+        if self._check_id:
+            try:
+                self.widget.after_cancel(self._check_id)
+            except Exception:
+                pass
+            self._check_id = None
+
     def _show_tooltip(self):
+        self.id = None  # 已执行，清除引用
+
         # Check if mouse is still over widget before showing
-        if not self._entered:
+        if not self._entered or self._destroyed:
             return
 
         if self.tooltip:
             return
 
+        # 再次检查 widget 是否存在
+        try:
+            if not self.widget.winfo_exists():
+                return
+        except Exception:
+            return
+
         self._visible = True
-        root = self.widget.winfo_toplevel()
-        self.tooltip = ctk.CTkToplevel(self.widget)
-        self.tooltip.overrideredirect(True)
-        self.tooltip.attributes("-topmost", True)
-        self.tooltip.transient(root)
+        try:
+            root = self.widget.winfo_toplevel()
+            self.tooltip = ctk.CTkToplevel(self.widget)
+            self.tooltip.overrideredirect(True)
+            self.tooltip.attributes("-topmost", True)
+            self.tooltip.transient(root)
+            # 禁用 tooltip 窗口接收焦点和鼠标事件
+            self.tooltip.attributes("-disabled", True)
 
-        # Get colors based on theme
-        mode = ctk.get_appearance_mode()
-        bg = self.options["bg"][1] if mode == "Dark" else self.options["bg"][0]
-        fg = self.options["fg"][1] if mode == "Dark" else self.options["fg"][0]
+            # Get colors based on theme
+            mode = ctk.get_appearance_mode()
+            bg = self.options["bg"][1] if mode == "Dark" else self.options["bg"][0]
+            fg = self.options["fg"][1] if mode == "Dark" else self.options["fg"][0]
 
-        self.tooltip.configure(fg_color=bg)
-        self.tooltip._border_color = ("gray75", "#3a3a3a")
-        self.tooltip._border_width = 1
+            self.tooltip.configure(fg_color=bg)
+            self.tooltip._border_color = ("gray75", "#3a3a3a")
+            self.tooltip._border_width = 1
 
-        frame = ctk.CTkFrame(self.tooltip, fg_color="transparent", corner_radius=self.options["corner_radius"])
-        frame.pack(fill="both", expand=True, padx=self.options["padding"][0], pady=self.options["padding"][1])
+            frame = ctk.CTkFrame(self.tooltip, fg_color="transparent", corner_radius=self.options["corner_radius"])
+            frame.pack(fill="both", expand=True, padx=self.options["padding"][0], pady=self.options["padding"][1])
 
-        ctk.CTkLabel(
-            frame,
-            text=self.message,
-            font=self.options["font"],
-            text_color=fg,
-            wraplength=300
-        ).pack()
+            ctk.CTkLabel(
+                frame,
+                text=self.message,
+                font=self.options["font"],
+                text_color=fg,
+                wraplength=300
+            ).pack()
 
-        self._position_tooltip()
-        
-        # 启动定时检查，确保 tooltip 在鼠标离开后隐藏
-        self._start_check()
+            self._position_tooltip()
+
+            # 启动定时检查，确保 tooltip 在鼠标离开后隐藏
+            self._start_check()
+        except Exception:
+            self._hide_tooltip()
 
     def _start_check(self):
         """定时检查鼠标是否仍在 widget 上"""
-        if self._check_id:
-            self.widget.after_cancel(self._check_id)
-        self._check_id = self.widget.after(200, self._check_mouse_position)
+        self._cancel_check()
+        if not self._destroyed:
+            try:
+                # 使用更短的检查间隔 (100ms) 提高响应速度
+                self._check_id = self.widget.after(100, self._check_mouse_position)
+            except Exception:
+                pass
 
     def _check_mouse_position(self):
         """检查鼠标位置，如果不在 widget 上则隐藏 tooltip"""
-        if not self.tooltip:
+        self._check_id = None  # 已执行，清除引用
+
+        if not self.tooltip or self._destroyed:
             return
-        
+
         try:
-            # 获取 widget 的屏幕坐标和尺寸
+            # 检查 widget 是否存在且可见
             if not self.widget.winfo_exists():
                 self._hide_tooltip()
                 return
-                
+
+            # 检查 widget 是否被映射（可见）
+            if not self.widget.winfo_ismapped():
+                self._hide_tooltip()
+                return
+
             wx = self.widget.winfo_rootx()
             wy = self.widget.winfo_rooty()
             ww = self.widget.winfo_width()
             wh = self.widget.winfo_height()
-            
+
             # 获取当前鼠标位置
             mx = self.widget.winfo_pointerx()
             my = self.widget.winfo_pointery()
-            
-            # 检查鼠标是否在 widget 范围内
-            if not (wx <= mx <= wx + ww and wy <= my <= wy + wh):
+
+            # 检查鼠标是否在 widget 范围内 (使用严格边界，不包含边缘)
+            if not (wx < mx < wx + ww and wy < my < wy + wh):
                 self._hide_tooltip()
                 return
-            
+
             # 继续检查
-            self._check_id = self.widget.after(200, self._check_mouse_position)
+            self._start_check()
         except Exception:
             self._hide_tooltip()
 
     def _hide_tooltip(self):
         self._visible = False
-        if self._check_id:
-            try:
-                self.widget.after_cancel(self._check_id)
-            except:
-                pass
-            self._check_id = None
+        self._entered = False
+        self._cancel_check()
+
         if self.tooltip:
             try:
                 tooltip = self.tooltip
@@ -152,15 +210,19 @@ class CTkToolTip:
                 tooltip.destroy()
             except Exception:
                 pass
+            self.tooltip = None  # 确保置空
 
     def _position_tooltip(self):
         if self.tooltip:
-            x = self.x + 15
-            y = self.y + 15
-            self.tooltip.geometry(f"+{x}+{y}")
+            try:
+                x = self.x + 15
+                y = self.y + 15
+                self.tooltip.geometry(f"+{x}+{y}")
+            except Exception:
+                pass
 
     def _on_window_hide(self, event=None):
-        """Hide tooltip when window is minimized"""
+        """Hide tooltip when window is minimized or loses focus"""
         self._hide_tooltip()
         return None  # Important: return None to let the event propagate
 

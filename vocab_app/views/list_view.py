@@ -535,22 +535,41 @@ class ListView(BaseView):
         return sorted(items, key=sort_key)
 
     def apply_filters(self):
+        """
+        使用数据库层搜索替代内存遍历，提升大词库性能。
+        """
         query = self.search_query.lower().strip()
         now_ts = datetime.now().timestamp()
 
-        # Access vocab_list from controller
-        vocab_list = self.controller.vocab_list
+        # 确定掌握状态过滤
+        mastered_filter = None
+        status = self.status_filter
 
-        result = []
-        for item in vocab_list:
-            if not self.match_status_filter(item, now_ts): continue
-            if query:
-                word_match = query in item.get('word', '').lower()
-                meaning_match = query in (item.get('meaning') or '').lower()
-                if not (word_match or meaning_match): continue
-            result.append(item)
+        # 对于简单的状态过滤，可以直接在数据库层处理
+        if status == "已掌握":
+            mastered_filter = True
+        elif status in ("待复习", "新单词", "学习中"):
+            mastered_filter = False
 
-        self.filtered_vocab_list = self.sort_vocab_list(result, now_ts)
+        # 使用数据库搜索
+        # 注意：对于"待复习"、"新单词"、"学习中"需要二次过滤（基于 next_review_time）
+        results, total_count = self.controller.db.search_words(
+            keyword=query,
+            mastered_filter=mastered_filter,
+            limit=10000,  # 获取足够多的结果用于二次过滤
+            offset=0
+        )
+
+        # 对于需要基于 next_review_time 的状态，进行二次过滤
+        if status == "待复习":
+            results = [item for item in results
+                      if item.get('next_review_time', 0) != 0 and item.get('next_review_time', 0) <= now_ts]
+        elif status == "新单词":
+            results = [item for item in results if item.get('next_review_time', 0) == 0]
+        elif status == "学习中":
+            results = [item for item in results if item.get('next_review_time', 0) > now_ts]
+
+        self.filtered_vocab_list = self.sort_vocab_list(results, now_ts)
         total_items = len(self.filtered_vocab_list)
         self.total_pages = max(1, (total_items + self.page_size - 1) // self.page_size)
         if self.current_page > self.total_pages: self.current_page = self.total_pages

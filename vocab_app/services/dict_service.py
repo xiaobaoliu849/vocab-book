@@ -4,6 +4,8 @@ from datetime import datetime
 
 from .tag_service import TagService
 from .word_family_service import WordFamilyService
+from .multi_dict_service import get_session
+
 
 class DictService:
     @staticmethod
@@ -12,8 +14,8 @@ class DictService:
         try:
             url = "http://m.youdao.com/translate"
             data = {"inputtext": text, "type": "AUTO"}
-            headers = {'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X)'}
-            r = requests.post(url, data=data, headers=headers, timeout=5)
+            session = get_session()
+            r = session.post(url, data=data, timeout=5)
             soup = BeautifulSoup(r.text, 'html.parser')
 
             res_ul = soup.find('ul', id='translateResult')
@@ -37,9 +39,9 @@ class DictService:
         dict keys: word, phonetic, meaning, example, date
         """
         try:
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
             url = f"https://dict.youdao.com/w/eng/{word}"
-            resp = requests.get(url, headers=headers, timeout=10)
+            session = get_session()
+            resp = session.get(url, timeout=10)
 
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, 'html.parser')
@@ -48,22 +50,35 @@ class DictService:
 
                 phonetic = ""
                 phs = soup.find_all('span', class_='phonetic')
-                if phs:
-                    phonetic = phs[1].get_text() if len(phs) > 1 else phs[0].get_text()
+                if phs and len(phs) > 0:
+                    try:
+                        phonetic = phs[1].get_text() if len(phs) > 1 else phs[0].get_text()
+                    except (IndexError, AttributeError):
+                        phonetic = ""
 
                 meaning = ""
                 trans = soup.find('div', class_='trans-container')
-                if trans and trans.find('ul'):
-                    meaning = "\n".join([li.get_text() for li in trans.find('ul').find_all('li') if not li.get('class')])
+                if trans:
+                    ul = trans.find('ul')
+                    if ul:
+                        try:
+                            meaning = "\n".join([li.get_text() for li in ul.find_all('li') if not li.get('class')])
+                        except (AttributeError, TypeError):
+                            meaning = ""
                 if not meaning:
                     meaning = "暂无释义"
 
                 example = ""
                 bi = soup.find('div', id='bilingual')
-                if bi and bi.find('li'):
-                    p = bi.find('li').find_all('p')
-                    if len(p) >= 2:
-                        example = f"{p[0].get_text(separator=' ', strip=True)}\n{p[1].get_text(separator=' ', strip=True)}"
+                if bi:
+                    li_elem = bi.find('li')
+                    if li_elem:
+                        p = li_elem.find_all('p')
+                        if p and len(p) >= 2:
+                            try:
+                                example = f"{p[0].get_text(separator=' ', strip=True)}\n{p[1].get_text(separator=' ', strip=True)}"
+                            except (IndexError, AttributeError):
+                                example = ""
 
                 # Parse Roots
                 roots = ""

@@ -250,12 +250,15 @@ class ReviewView(BaseView):
         if handler:
             handler(word, example, context)
 
-        # Audio Play (Auto)
-        def safe_play():
-            if self.cur_word: self.play_audio(self.cur_word['word'])
-        self.btn_rp.configure(command=safe_play)
+        # Audio Play (Auto) - 使用类方法而非内部函数
+        self.btn_rp.configure(command=self._safe_play_audio)
         if self.review_method != "spelling": # Don't play in spelling mode until revealed/checked? Standard learning practice.
-            safe_play()
+            self._safe_play_audio()
+
+    def _safe_play_audio(self):
+        """安全播放当前单词发音（类方法，避免在循环中重复定义）"""
+        if self.cur_word:
+            self.play_audio(self.cur_word['word'])
 
     def _setup_flashcard_mode(self, word, example, context):
         """Setup flashcard (recognition) mode"""
@@ -364,23 +367,52 @@ class ReviewView(BaseView):
 
     def check_exercise(self):
         if not self.cur_word or self.spelling_checked: return
-        
+
         user_input = self.entry_ex.get().strip().lower()
         correct = self.cur_word['word'].strip().lower()
-        
+
         self.spelling_checked = True
         self.entry_ex.configure(state="disabled")
-        
+        self._pending_reveal_id = None  # 用于存储延迟调用的 ID
+
         if user_input == correct:
-            self.lbl_ex_result.configure(text="✅ 拼写正确！", text_color="#4CAF50")
+            self.lbl_ex_result.configure(text="✅ 拼写正确！点击任意处继续", text_color="#4CAF50")
             self.entry_ex.configure(border_color="#4CAF50")
-            self.update_idletasks() # Ensure UI shows the result before the delay
-            self.after(800, self.reveal_meaning)
+            self.update_idletasks()
+            self._pending_reveal_id = self.after(800, self._do_reveal_meaning)
         else:
-            self.lbl_ex_result.configure(text=f"❌ 拼写有误 (正确: {correct})", text_color="#F44336")
+            self.lbl_ex_result.configure(text=f"❌ 拼写有误 (正确: {correct}) 点击任意处继续", text_color="#F44336")
             self.entry_ex.configure(border_color="#F44336")
             self.update_idletasks()
-            self.after(2000, self.reveal_meaning)
+            self._pending_reveal_id = self.after(2000, self._do_reveal_meaning)
+
+        # 绑定点击事件，允许用户跳过等待
+        self.exercise_overlay.bind("<Button-1>", self._skip_delay_and_reveal)
+        self.lbl_ex_result.bind("<Button-1>", self._skip_delay_and_reveal)
+
+    def _skip_delay_and_reveal(self, event=None):
+        """允许用户点击跳过延迟，立即显示释义"""
+        if self._pending_reveal_id:
+            self.after_cancel(self._pending_reveal_id)
+            self._pending_reveal_id = None
+        # 解除绑定
+        try:
+            self.exercise_overlay.unbind("<Button-1>")
+            self.lbl_ex_result.unbind("<Button-1>")
+        except Exception:
+            pass
+        self._do_reveal_meaning()
+
+    def _do_reveal_meaning(self):
+        """实际执行显示释义的逻辑"""
+        self._pending_reveal_id = None
+        # 解除绑定（如果还没解除）
+        try:
+            self.exercise_overlay.unbind("<Button-1>")
+            self.lbl_ex_result.unbind("<Button-1>")
+        except Exception:
+            pass
+        self.reveal_meaning()
 
     def process_review_sm2(self, quality):
         if not self.cur_word: return
