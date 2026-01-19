@@ -280,8 +280,10 @@ class DetailWindow(ctk.CTkToplevel):
         except:
             avg_char_width = font_size
         
-        container_width = 500
-        
+        # 根据 width_chars 计算容器宽度（之前硬编码500导致small_card高度估算错误）
+        # 平均每字符约 8-10 像素宽度
+        container_width = max(width_chars * 9, 200)
+
         # 计算预估行数
         total_lines = 0
         for paragraph in text.split('\n'):

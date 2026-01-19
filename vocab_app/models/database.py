@@ -152,6 +152,20 @@ class DatabaseManager:
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_word_families_root ON word_families(root)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_word_families_word ON word_families(word)')
 
+        # Dictionary cache table (持久化词典查询缓存)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS dict_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                word TEXT NOT NULL,
+                source TEXT NOT NULL,
+                data TEXT,
+                created_at REAL,
+                UNIQUE(word, source)
+            )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_dict_cache_word ON dict_cache(word)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_dict_cache_created ON dict_cache(created_at)')
+
         conn.commit()
         # 注意：不再关闭连接，使用长连接
 
@@ -493,7 +507,7 @@ class DatabaseManager:
 
     # --- 搜索与分页 (性能优化) ---
 
-    def search_words(self, keyword="", tag_filter="", mastered_filter=None, sort_by="next_review_time", sort_order="ASC", limit=50, offset=0):
+    def search_words(self, keyword="", tag_filter="", mastered_filter=None, status_filter=None, sort_by="next_review_time", sort_order="ASC", limit=50, offset=0):
         """
         在数据库层进行搜索和过滤，避免内存中遍历全部单词。
 
@@ -501,6 +515,7 @@ class DatabaseManager:
             keyword: 搜索关键词（匹配 word 或 meaning）
             tag_filter: 标签过滤（如 "CET4", "GRE"）
             mastered_filter: 掌握状态过滤 (True/False/None)
+            status_filter: 复习状态过滤 ("due"=待复习, "new"=新单词, "learning"=学习中, None=全部)
             sort_by: 排序字段
             sort_order: 排序方向 (ASC/DESC)
             limit: 返回数量限制
@@ -529,6 +544,21 @@ class DatabaseManager:
         if mastered_filter is not None:
             conditions.append("mastered = ?")
             params.append(1 if mastered_filter else 0)
+
+        # 复习状态过滤（基于 next_review_time）
+        if status_filter:
+            now_ts = time.time()
+            if status_filter == "due":
+                # 待复习：未掌握 且 next_review_time > 0 且 <= 当前时间
+                conditions.append("mastered = 0 AND next_review_time > 0 AND next_review_time <= ?")
+                params.append(now_ts)
+            elif status_filter == "new":
+                # 新单词：next_review_time = 0
+                conditions.append("next_review_time = 0")
+            elif status_filter == "learning":
+                # 学习中：未掌握 且 next_review_time > 当前时间
+                conditions.append("mastered = 0 AND next_review_time > ?")
+                params.append(now_ts)
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
@@ -569,3 +599,106 @@ class DatabaseManager:
         cursor = conn.cursor()
         cursor.execute('SELECT COUNT(*) FROM words')
         return cursor.fetchone()[0]
+
+    # --- 词典缓存操作 (Dict Cache) ---
+
+    def get_dict_cache(self, word, source, ttl=86400):
+        """
+        获取词典缓存。
+
+        Args:
+            word: 单词
+            source: 词典源标识 (bing, cambridge, freedict 等)
+            ttl: 缓存有效期（秒），默认 24 小时
+
+        Returns:
+            缓存的数据字典，或 None（未找到/已过期）
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        now = time.time()
+        cursor.execute('''
+            SELECT data, created_at FROM dict_cache
+            WHERE word = ? AND source = ?
+        ''', (word.lower(), source))
+
+        row = cursor.fetchone()
+        if row:
+            data_json, created_at = row
+            # 检查是否过期
+            if now - created_at < ttl:
+                try:
+                    return json.loads(data_json)
+                except (json.JSONDecodeError, TypeError):
+                    return None
+            else:
+                # 过期，删除旧缓存
+                cursor.execute('DELETE FROM dict_cache WHERE word = ? AND source = ?',
+                              (word.lower(), source))
+                conn.commit()
+        return None
+
+    def set_dict_cache(self, word, source, data):
+        """
+        设置词典缓存。
+
+        Args:
+            word: 单词
+            source: 词典源标识
+            data: 要缓存的数据字典
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        try:
+            data_json = json.dumps(data, ensure_ascii=False)
+            cursor.execute('''
+                INSERT OR REPLACE INTO dict_cache (word, source, data, created_at)
+                VALUES (?, ?, ?, ?)
+            ''', (word.lower(), source, data_json, time.time()))
+            conn.commit()
+        except Exception as e:
+            print(f"Set dict cache error: {e}")
+
+    def clear_expired_dict_cache(self, ttl=86400):
+        """
+        清理过期的词典缓存。
+
+        Args:
+            ttl: 缓存有效期（秒），默认 24 小时
+
+        Returns:
+            删除的记录数
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        expired_time = time.time() - ttl
+        cursor.execute('DELETE FROM dict_cache WHERE created_at < ?', (expired_time,))
+        deleted = cursor.rowcount
+        conn.commit()
+        return deleted
+
+    def get_dict_cache_stats(self):
+        """获取词典缓存统计信息"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('SELECT COUNT(*) FROM dict_cache')
+        total = cursor.fetchone()[0]
+
+        # 按来源统计
+        cursor.execute('SELECT source, COUNT(*) FROM dict_cache GROUP BY source')
+        by_source = {row[0]: row[1] for row in cursor.fetchall()}
+
+        return {'total': total, 'by_source': by_source}
+
+    def clear_all_dict_cache(self):
+        """清空所有词典缓存"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM dict_cache')
+        deleted = cursor.rowcount
+        conn.commit()
+        return deleted

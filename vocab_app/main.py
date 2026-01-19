@@ -289,11 +289,14 @@ class VocabApp(ctk.CTk):
             print(f"Hotkey setup error: {e}")
 
     def on_hotkey_triggered(self):
-        try:
-            keyboard.send('ctrl+c')
-            time.sleep(0.1)
-        except Exception as e:
-            print(f"Auto-copy failed: {e}")
+        # Check if auto-copy is enabled (default True for backward compatibility)
+        auto_copy = self.config.get("auto_copy_on_hotkey", True)
+        if auto_copy:
+            try:
+                keyboard.send('ctrl+c')
+                time.sleep(0.1)
+            except Exception as e:
+                print(f"Auto-copy failed: {e}")
         self.after(0, self.bring_to_front)
 
     def bring_to_front(self):

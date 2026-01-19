@@ -3,6 +3,7 @@
 支持: 有道词典、剑桥词典 (Cambridge)、Bing词典、Free Dictionary
 """
 import re
+import time
 import requests
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -10,6 +11,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # 全局共享 Session，复用 TCP 连接，提升性能
 _session = None
+# 数据库管理器引用（延迟初始化）
+_db_manager = None
 
 def get_session():
     """获取共享的 requests Session"""
@@ -34,6 +37,21 @@ def get_session():
     return _session
 
 
+def get_db_manager():
+    """获取数据库管理器（延迟加载，避免循环导入）"""
+    global _db_manager
+    if _db_manager is None:
+        try:
+            from ..models.database import DatabaseManager
+            from ..config import DB_PATH
+            import os
+            _db_manager = DatabaseManager(db_path=DB_PATH)
+        except Exception as e:
+            print(f"Failed to init DB manager for cache: {e}")
+            return None
+    return _db_manager
+
+
 def _get_clean_text(el):
     """Helper to safely extract clean text from a BeautifulSoup element."""
     if not el:
@@ -43,7 +61,7 @@ def _get_clean_text(el):
 
 
 class MultiDictService:
-    """多词典聚合查询服务（带缓存）"""
+    """多词典聚合查询服务（带持久化缓存）"""
 
     # 词典源标识
     DICT_YOUDAO = "youdao"
@@ -58,35 +76,66 @@ class MultiDictService:
         DICT_BING: "Bing 词典",
         DICT_FREE: "Free Dictionary",
     }
-    
-    # 全局缓存：{word: {"bing": result, "freedict": result, "timestamp": time}}
-    _cache = {}
-    _cache_ttl = 1800  # 缓存有效期 30 分钟
-    
+
+    # 内存缓存（一级缓存，快速访问）
+    _memory_cache = {}
+    _memory_cache_ttl = 1800  # 内存缓存 30 分钟
+
+    # 持久化缓存 TTL（二级缓存，24小时）
+    _db_cache_ttl = 86400
+
     @classmethod
     def get_cached(cls, word, source):
-        """获取缓存的词典结果"""
-        import time
+        """获取缓存的词典结果（先查内存，再查数据库）"""
         word_lower = word.lower()
-        if word_lower in cls._cache:
-            cache_entry = cls._cache[word_lower]
-            # 检查是否过期
-            if time.time() - cache_entry.get("timestamp", 0) < cls._cache_ttl:
-                return cache_entry.get(source)
+
+        # 一级缓存：内存
+        if word_lower in cls._memory_cache:
+            cache_entry = cls._memory_cache[word_lower]
+            if time.time() - cache_entry.get("timestamp", 0) < cls._memory_cache_ttl:
+                result = cache_entry.get(source)
+                if result is not None:
+                    return result
             else:
-                # 清除过期缓存
-                del cls._cache[word_lower]
+                # 内存缓存过期，清除
+                del cls._memory_cache[word_lower]
+
+        # 二级缓存：数据库
+        db = get_db_manager()
+        if db:
+            try:
+                result = db.get_dict_cache(word, source, ttl=cls._db_cache_ttl)
+                if result is not None:
+                    # 回填到内存缓存
+                    cls._update_memory_cache(word, source, result)
+                    return result
+            except Exception as e:
+                print(f"DB cache read error: {e}")
+
         return None
-    
+
     @classmethod
     def set_cache(cls, word, source, result):
-        """设置缓存"""
-        import time
+        """设置缓存（同时写入内存和数据库）"""
+        # 写入内存缓存
+        cls._update_memory_cache(word, source, result)
+
+        # 写入数据库缓存
+        db = get_db_manager()
+        if db:
+            try:
+                db.set_dict_cache(word, source, result)
+            except Exception as e:
+                print(f"DB cache write error: {e}")
+
+    @classmethod
+    def _update_memory_cache(cls, word, source, result):
+        """更新内存缓存"""
         word_lower = word.lower()
-        if word_lower not in cls._cache:
-            cls._cache[word_lower] = {"timestamp": time.time()}
-        cls._cache[word_lower][source] = result
-        cls._cache[word_lower]["timestamp"] = time.time()
+        if word_lower not in cls._memory_cache:
+            cls._memory_cache[word_lower] = {"timestamp": time.time()}
+        cls._memory_cache[word_lower][source] = result
+        cls._memory_cache[word_lower]["timestamp"] = time.time()
 
     @staticmethod
     def search_cambridge(word):

@@ -115,8 +115,11 @@ class ListView(BaseView):
         self.context_menu.add_command(label="复制单词", command=self.on_context_copy)
         self.context_menu.add_separator()
         self.context_menu.add_command(label="删除单词", command=self.on_context_delete)
+        # Bind menu close event to restore row style
+        self.context_menu.bind("<Unmap>", self._on_context_menu_close)
 
         self.current_context_item = None
+        self.current_context_row = None  # Track highlighted row for context menu
 
     def create_row_widget(self):
         # Card container
@@ -277,10 +280,10 @@ class ListView(BaseView):
         # Apply recursive binding for clicks
         self._bind_click(row['content_btn'], on_row_click)
 
-        # Bind right click
+        # Bind right click (pass row for visual feedback)
         for widget in [row['content_btn'], row['word_lbl'], row['phonetic_lbl'], row['meaning_lbl']]:
-            widget.bind("<Button-3>", lambda e, x=item: self.show_context_menu(e, x))
-            widget.bind("<Button-2>", lambda e, x=item: self.show_context_menu(e, x))
+            widget.bind("<Button-3>", lambda e, x=item, r=row: self.show_context_menu(e, x, r))
+            widget.bind("<Button-2>", lambda e, x=item, r=row: self.show_context_menu(e, x, r))
 
         play_btn = row['play_btn']
         row['play_btn'].configure(command=lambda w=item['word'], b=play_btn: self.play_audio(w, b))
@@ -457,12 +460,27 @@ class ListView(BaseView):
             self.refresh_list()
 
     # --- Context Menu ---
-    def show_context_menu(self, event, item):
+    def show_context_menu(self, event, item, row=None):
         self.current_context_item = item
+        self.current_context_row = row
+
+        # Highlight the row to show which item is being acted upon
+        if row:
+            row['frame'].configure(border_color=("#3B8ED0", "#1f538d"), fg_color=("gray98", "#323232"))
+
         try:
             self.context_menu.tk_popup(event.x_root, event.y_root)
         finally:
             self.context_menu.grab_release()
+
+    def _on_context_menu_close(self, event=None):
+        """Restore row style when context menu closes"""
+        if self.current_context_row:
+            self.current_context_row['frame'].configure(
+                border_color=("gray90", "gray30"),
+                fg_color=("white", "#2b2b2b")
+            )
+            self.current_context_row = None
 
     def on_context_view(self):
         if self.current_context_item:
@@ -508,23 +526,6 @@ class ListView(BaseView):
         self.status_filter = value
         self._reset_and_render()
 
-    def match_status_filter(self, item, now_ts):
-        status = self.status_filter
-        next_review_time = item.get('next_review_time', 0)
-        is_mastered = item.get('mastered', False)
-
-        if status == "全部":
-            return True
-        if status == "待复习":
-            return not is_mastered and next_review_time != 0 and next_review_time <= now_ts
-        if status == "已掌握":
-            return is_mastered
-        if status == "新单词":
-            return next_review_time == 0
-        if status == "学习中":
-            return not is_mastered and next_review_time > now_ts
-        return True
-
     def sort_vocab_list(self, items, now_ts):
         def sort_key(item):
             if item.get('mastered'): return (3, 0)
@@ -536,38 +537,34 @@ class ListView(BaseView):
 
     def apply_filters(self):
         """
-        使用数据库层搜索替代内存遍历，提升大词库性能。
+        使用数据库层搜索和状态过滤，避免内存中二次过滤，提升大词库性能。
         """
         query = self.search_query.lower().strip()
         now_ts = datetime.now().timestamp()
 
-        # 确定掌握状态过滤
-        mastered_filter = None
+        # 映射 UI 状态到数据库层 status_filter
         status = self.status_filter
+        status_filter = None
+        mastered_filter = None
 
-        # 对于简单的状态过滤，可以直接在数据库层处理
         if status == "已掌握":
             mastered_filter = True
-        elif status in ("待复习", "新单词", "学习中"):
-            mastered_filter = False
+        elif status == "待复习":
+            status_filter = "due"
+        elif status == "新单词":
+            status_filter = "new"
+        elif status == "学习中":
+            status_filter = "learning"
+        # "全部" 不设置任何过滤
 
-        # 使用数据库搜索
-        # 注意：对于"待复习"、"新单词"、"学习中"需要二次过滤（基于 next_review_time）
+        # 使用数据库搜索（完全在数据库层过滤，无需二次过滤）
         results, total_count = self.controller.db.search_words(
             keyword=query,
             mastered_filter=mastered_filter,
-            limit=10000,  # 获取足够多的结果用于二次过滤
+            status_filter=status_filter,
+            limit=10000,  # 获取足够多的结果用于排序和分页
             offset=0
         )
-
-        # 对于需要基于 next_review_time 的状态，进行二次过滤
-        if status == "待复习":
-            results = [item for item in results
-                      if item.get('next_review_time', 0) != 0 and item.get('next_review_time', 0) <= now_ts]
-        elif status == "新单词":
-            results = [item for item in results if item.get('next_review_time', 0) == 0]
-        elif status == "学习中":
-            results = [item for item in results if item.get('next_review_time', 0) > now_ts]
 
         self.filtered_vocab_list = self.sort_vocab_list(results, now_ts)
         total_items = len(self.filtered_vocab_list)

@@ -309,12 +309,42 @@ class SettingsView(BaseView):
 
         ctk.CTkLabel(card, text="全局唤醒快捷键", font=("Microsoft YaHei UI", 13), anchor="w").pack(fill="x", padx=20, pady=(0, 8))
         hk_input_row = ctk.CTkFrame(card, fg_color="transparent")
-        hk_input_row.pack(fill="x", padx=20, pady=(0, 20))
+        hk_input_row.pack(fill="x", padx=20, pady=(0, 15))
 
         self.entry_hk = ctk.CTkEntry(hk_input_row, height=40, font=("Microsoft YaHei UI", 14), placeholder_text="例如: ctrl+alt+v")
         self.entry_hk.pack(side="left", fill="x", expand=True, padx=(0, 10))
         ctk.CTkButton(hk_input_row, text="💾 保存", height=40, width=100, font=("Microsoft YaHei UI", 13, "bold"),
                      fg_color="#4CAF50", hover_color="#45a049", command=self.update_hotkey).pack(side="left")
+
+        # Auto-copy on hotkey toggle
+        auto_copy_row = ctk.CTkFrame(card, fg_color="transparent")
+        auto_copy_row.pack(fill="x", padx=20, pady=(0, 15))
+
+        auto_copy_left = ctk.CTkFrame(auto_copy_row, fg_color="transparent")
+        auto_copy_left.pack(side="left", fill="x", expand=True)
+
+        ctk.CTkLabel(
+            auto_copy_left,
+            text="唤醒时自动复制选中文字",
+            font=("Microsoft YaHei UI", 13),
+            anchor="w"
+        ).pack(anchor="w")
+
+        ctk.CTkLabel(
+            auto_copy_left,
+            text="按下快捷键时自动发送 Ctrl+C 复制选中内容",
+            font=("Microsoft YaHei UI", 11),
+            text_color=("gray50", "gray60"),
+            anchor="w"
+        ).pack(anchor="w")
+
+        self.auto_copy_switch = ctk.CTkSwitch(
+            auto_copy_row,
+            text="",
+            width=50,
+            command=self.on_auto_copy_change
+        )
+        self.auto_copy_switch.pack(side="right", padx=10)
 
         # App Shortcuts Display
         ctk.CTkLabel(card, text="应用内快捷键 (固定)", font=("Microsoft YaHei UI", 13, "bold"), anchor="w").pack(fill="x", padx=20, pady=(10, 8))
@@ -342,15 +372,32 @@ class SettingsView(BaseView):
 
         cache_info_box = ctk.CTkFrame(card, fg_color=("#f5f5f5", "#1e1e1e"), corner_radius=10)
         cache_info_box.pack(fill="x", padx=20, pady=(0, 10))
-        cache_row = ctk.CTkFrame(cache_info_box, fg_color="transparent")
-        cache_row.pack(fill="x", padx=15, pady=15)
 
-        ctk.CTkLabel(cache_row, text="🎵 音频缓存", font=("Microsoft YaHei UI", 13)).pack(side="left")
-        self.lbl_cache = ctk.CTkLabel(cache_row, text="计算中...", font=("Microsoft YaHei UI", 13, "bold"))
+        # 音频缓存行
+        audio_cache_row = ctk.CTkFrame(cache_info_box, fg_color="transparent")
+        audio_cache_row.pack(fill="x", padx=15, pady=(15, 8))
+
+        ctk.CTkLabel(audio_cache_row, text="🎵 音频缓存", font=("Microsoft YaHei UI", 13)).pack(side="left")
+        self.lbl_cache = ctk.CTkLabel(audio_cache_row, text="计算中...", font=("Microsoft YaHei UI", 13, "bold"))
         self.lbl_cache.pack(side="left", padx=10)
 
-        ctk.CTkButton(card, text="🗑️ 清理缓存", height=40, font=("Microsoft YaHei UI", 13, "bold"),
-                     fg_color="#f44336", hover_color="#da190b", command=self.clear_cache).pack(fill="x", padx=20, pady=(0, 20))
+        # 词典缓存行
+        dict_cache_row = ctk.CTkFrame(cache_info_box, fg_color="transparent")
+        dict_cache_row.pack(fill="x", padx=15, pady=(0, 15))
+
+        ctk.CTkLabel(dict_cache_row, text="📚 词典缓存", font=("Microsoft YaHei UI", 13)).pack(side="left")
+        self.lbl_dict_cache = ctk.CTkLabel(dict_cache_row, text="计算中...", font=("Microsoft YaHei UI", 13, "bold"))
+        self.lbl_dict_cache.pack(side="left", padx=10)
+
+        # 清理按钮行
+        btn_row = ctk.CTkFrame(card, fg_color="transparent")
+        btn_row.pack(fill="x", padx=20, pady=(0, 20))
+
+        ctk.CTkButton(btn_row, text="🗑️ 清理音频", height=40, font=("Microsoft YaHei UI", 13, "bold"),
+                     fg_color="#f44336", hover_color="#da190b", command=self.clear_cache).pack(side="left", fill="x", expand=True, padx=(0, 5))
+
+        ctk.CTkButton(btn_row, text="🗑️ 清理词典", height=40, font=("Microsoft YaHei UI", 13, "bold"),
+                     fg_color="#FF9800", hover_color="#F57C00", command=self.clear_dict_cache).pack(side="left", fill="x", expand=True, padx=(5, 0))
 
     def create_appearance_card(self, parent):
         card = ctk.CTkFrame(parent, fg_color=("white", "#2b2b2b"), corner_radius=15)
@@ -455,6 +502,12 @@ class SettingsView(BaseView):
                 self.controller.review_scheduler.check_interval = interval * 60
                 if not self.controller.review_scheduler.running:
                     self.controller.review_scheduler.start()
+
+    def on_auto_copy_change(self):
+        """自动复制开关改变"""
+        is_enabled = self.auto_copy_switch.get() == 1
+        self.controller.config["auto_copy_on_hotkey"] = is_enabled
+        save_config(self.controller.config)
 
     def create_donate_card(self, parent):
         card = ctk.CTkFrame(parent, fg_color=("white", "#2b2b2b"), corner_radius=15)
@@ -625,6 +678,14 @@ class SettingsView(BaseView):
             self.entry_hk.delete(0, "end")
             self.entry_hk.insert(0, self.controller.current_hotkey)
 
+        # Update Auto-copy switch (if visible)
+        if hasattr(self, 'auto_copy_switch') and self.auto_copy_switch.winfo_exists():
+            auto_copy = self.controller.config.get("auto_copy_on_hotkey", True)
+            if auto_copy:
+                self.auto_copy_switch.select()
+            else:
+                self.auto_copy_switch.deselect()
+
         # Update Theme (if visible)
         if hasattr(self, 'theme_dropdown') and self.theme_dropdown.winfo_exists():
             current_mode = ctk.get_appearance_mode()
@@ -680,6 +741,15 @@ class SettingsView(BaseView):
                         count += 1
             self.lbl_cache.configure(text=f"{count} 个文件 ({size/1024/1024:.1f} MB)")
 
+        # Update Dict Cache Info (if visible)
+        if hasattr(self, 'lbl_dict_cache') and self.lbl_dict_cache.winfo_exists():
+            try:
+                stats = self.controller.db.get_dict_cache_stats()
+                total = stats.get('total', 0)
+                self.lbl_dict_cache.configure(text=f"{total} 条记录")
+            except Exception:
+                self.lbl_dict_cache.configure(text="0 条记录")
+
     def update_hotkey(self):
         if not hasattr(self, 'entry_hk') or not self.entry_hk.winfo_exists():
             return
@@ -701,7 +771,17 @@ class SettingsView(BaseView):
                 except Exception as e:
                     messagebox.showerror("错误", f"清理失败: {e}")
             self.refresh_settings()
-            messagebox.showinfo("完成", "缓存已清理")
+            messagebox.showinfo("完成", "音频缓存已清理")
+
+    def clear_dict_cache(self):
+        """清理词典查询缓存"""
+        if messagebox.askyesno("确认", "确定清空所有词典查询缓存吗？\n\n清理后再次查询单词时需要重新从网络获取。"):
+            try:
+                deleted = self.controller.db.clear_all_dict_cache()
+                self.refresh_settings()
+                messagebox.showinfo("完成", f"已清理 {deleted} 条词典缓存")
+            except Exception as e:
+                messagebox.showerror("错误", f"清理失败: {e}")
 
     def change_theme(self, choice):
         theme_map = {"浅色": "Light", "深色": "Dark", "跟随系统": "System"}
