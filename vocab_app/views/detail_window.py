@@ -35,6 +35,7 @@ class DetailWindow(ctk.CTkToplevel):
 
         self.setup_ui()
         self.load_word_data()
+        self.after(300, self.play_audio)
         
         # Remove grab_set() as it can block minimize button on some Windows environments.
         # Use focus_force to ensure it pops up but remains a standard window.
@@ -230,12 +231,14 @@ class DetailWindow(ctk.CTkToplevel):
             self.current_index -= 1
             self.load_word_data()
             self._scroll_to_top()
+            self.after(100, self.play_audio)
 
     def next_word(self):
         if self.current_index < len(self.items_list) - 1:
             self.current_index += 1
             self.load_word_data()
             self._scroll_to_top()
+            self.after(100, self.play_audio)
 
     def _scroll_to_top(self):
         # Access internal canvas for scrolling

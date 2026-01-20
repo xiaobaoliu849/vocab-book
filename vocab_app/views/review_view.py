@@ -23,6 +23,12 @@ class ReviewView(BaseView):
         self.review_total = 0
         self._queue_lock = threading.Lock()
         self._event_bound = False
+        
+        # 统计数据
+        self.review_start_time = None
+        self.review_correct_count = 0
+        self.review_fuzzy_count = 0
+        self.review_forgot_count = 0
 
         # --- Top Header: Mode Switcher ---
         self.header_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -51,6 +57,16 @@ class ReviewView(BaseView):
                                            text_color=("gray20", "gray80"), font=("Microsoft YaHei UI", 12),
                                            command=self.toggle_cram_mode)
         self.btn_toggle_cram.pack(side="right")
+        
+        # 结束复习按钮
+        self.btn_end_review = ctk.CTkButton(
+            self.header_frame, text="⏹ 结束", width=80, height=36, corner_radius=18,
+            fg_color="transparent", border_width=1, border_color="#F44336",
+            text_color="#F44336", hover_color=("#FFEBEE", "#3a1a1a"),
+            font=("Microsoft YaHei UI", 12),
+            command=self.end_review_early
+        )
+        self.btn_end_review.pack(side="right", padx=(0, 10))
 
         # Row 2: Progress (Moved inside card or kept top)
         self.progress_container = ctk.CTkFrame(self, fg_color="transparent")
@@ -161,6 +177,12 @@ class ReviewView(BaseView):
         self.cur_word = None
         self.spelling_checked = False
         self._event_bound = False 
+        
+        # 重置统计数据
+        self.review_start_time = datetime.now()
+        self.review_correct_count = 0
+        self.review_fuzzy_count = 0
+        self.review_forgot_count = 0
         
         # Unified entry point
         self.next_card()
@@ -423,6 +445,14 @@ class ReviewView(BaseView):
 
         self.controller.db.update_sm2_status(word, easiness, interval, repetitions, next_ts, quality)
         self.controller.reload_vocab_list()
+        
+        # 统计评分
+        if quality >= 4:
+            self.review_correct_count += 1
+        elif quality >= 3:
+            self.review_fuzzy_count += 1
+        else:
+            self.review_forgot_count += 1
 
         with self._queue_lock:
             if not self.queue:
@@ -453,12 +483,96 @@ class ReviewView(BaseView):
                 pass
 
     def show_finished_screen(self):
-        msg = "🎉 今日复习完毕！"
-        self.update_lbl_rw(msg, ("Microsoft YaHei UI", 24, "bold"))
+        # 隐藏操作区域
+        for child in [self.reveal_overlay, self.exercise_overlay, self.act_frame]:
+            child.pack_forget()
+        
+        # 计算统计数据
+        elapsed_time = datetime.now() - self.review_start_time if self.review_start_time else None
+        total_reviews = self.review_correct_count + self.review_fuzzy_count + self.review_forgot_count
+        
+        if total_reviews > 0:
+            accuracy = (self.review_correct_count / total_reviews) * 100
+        else:
+            accuracy = 0
+        
+        # 格式化用时
+        if elapsed_time:
+            total_seconds = int(elapsed_time.total_seconds())
+            minutes = total_seconds // 60
+            seconds = total_seconds % 60
+            time_str = f"{minutes}分{seconds}秒" if minutes > 0 else f"{seconds}秒"
+        else:
+            time_str = "未知"
+        
+        # 根据正确率选择鼓励语和emoji
+        if total_reviews == 0:
+            emoji = "📭"
+            title = "暂无待复习单词"
+            encourage = "词库空空如也，快去添加新单词吧！"
+        elif accuracy >= 90:
+            emoji = "🏆"
+            title = "太棒了！"
+            encourage = "记忆力超群，继续保持！"
+        elif accuracy >= 70:
+            emoji = "🎉"
+            title = "复习完毕！"
+            encourage = "表现不错，再接再厉！"
+        elif accuracy >= 50:
+            emoji = "💪"
+            title = "继续加油！"
+            encourage = "熟能生巧，多复习几次就记住了！"
+        else:
+            emoji = "🌱"
+            title = "学习之路"
+            encourage = "万事开头难，坚持就是胜利！"
+        
+        # 更新标题
+        self.update_lbl_rw(f"{emoji} {title}", ("Microsoft YaHei UI", 28, "bold"))
+        
+        # 构建统计面板内容
+        stats_text = f"""
+
+{encourage}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 本次复习统计
+
+   ⏱️  用时：{time_str}
+   📝  复习单词：{self.review_total} 个
+   
+   ✅  熟悉：{self.review_correct_count} 个
+   🤔  模糊：{self.review_fuzzy_count} 个
+   ❌  忘记：{self.review_forgot_count} 个
+   
+   🎯  正确率：{accuracy:.0f}%
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💡 提示：可尝试「突击模式」复习已掌握的单词
+"""
+        
         self.txt_rm.configure(state="normal")
         self.txt_rm.delete("0.0", "end")
-        self.txt_rm.insert("0.0", "\n\n        所有待复习单词已完成。您可以尝试‘突击模式’或切换复习模式。")
+        self.txt_rm.insert("0.0", stats_text)
         self.txt_rm.configure(state="disabled")
-        for child in [self.reveal_overlay, self.exercise_overlay, self.act_frame]: child.pack_forget()
+        self.txt_rm.see("0.0")
+        
+        # 更新进度条
         self.review_progress_bar.set(1)
         self.lbl_review_progress.configure(text=f"已完成 {self.review_completed} 个单词")
+
+    def end_review_early(self):
+        """提前结束复习，显示当前统计"""
+        total_reviews = self.review_correct_count + self.review_fuzzy_count + self.review_forgot_count
+        
+        if total_reviews == 0:
+            # 还没开始复习，直接返回
+            return
+        
+        # 清空队列，触发结束统计
+        with self._queue_lock:
+            self.queue.clear()
+        
+        self.show_finished_screen()

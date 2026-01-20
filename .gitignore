@@ -24,6 +24,8 @@ dist/
 
 # Data
 vocab.db
+vocab.db-wal
+vocab.db-shm
 vocab.json
 config.json
 sounds/*.mp3
