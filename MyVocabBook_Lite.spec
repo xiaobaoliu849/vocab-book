@@ -4,6 +4,12 @@
 """
 
 from PyInstaller.utils.hooks import collect_all
+import tkinter
+import os
+
+# Dynamically find Tcl/Tk paths
+tcl_dir = r"D:\conda\Library\lib\tcl8.6"
+tk_dir = r"D:\conda\Library\lib\tk8.6"
 
 datas = [
     ('version.json', '.'),
@@ -12,6 +18,10 @@ datas = [
     ('app.png', '.'),
     ('donate_qr.png', '.'),
 ]
+
+if tcl_dir and tk_dir:
+    datas.append((tcl_dir, '_tcl_data'))
+    datas.append((tk_dir, '_tk_data'))
 
 binaries = []
 hiddenimports = []
@@ -94,7 +104,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     console=False,
-    disable_windowed_traceback=True,
+    disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
