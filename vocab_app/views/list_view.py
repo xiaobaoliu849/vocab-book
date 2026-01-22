@@ -21,6 +21,7 @@ class ListView(BaseView):
         self.list_search_timer = None
         self.selected_words = set() # Store selected words (by word string)
         self._last_detail_open_time = 0 # Debounce for DetailWindow
+        self.focused_index = -1  # Currently focused row index (keyboard navigation)
 
         # Toolbar
         toolbar_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -121,6 +122,174 @@ class ListView(BaseView):
         self.current_context_item = None
         self.current_context_row = None  # Track highlighted row for context menu
 
+        # Keyboard navigation bindings
+        self.bind_keyboard_events()
+
+    def bind_keyboard_events(self):
+        """Bind keyboard events for list navigation"""
+        # Bind to the scrollable frame and main view
+        # Bind to controller (main window) for reliable keyboard capture
+        self.controller.bind("<Up>", self._handle_key_up)
+        self.controller.bind("<Down>", self._handle_key_down)
+        self.controller.bind("<Return>", self._handle_key_enter)
+        self.controller.bind("<Delete>", self._handle_key_delete)
+        self.controller.bind("<Control-a>", self._handle_key_select_all)
+        self.controller.bind("<Control-A>", self._handle_key_select_all)
+        
+    def _is_list_view_active(self):
+        """Check if list view is currently visible and should handle keys"""
+        return self.winfo_ismapped() and self.focused_index >= 0
+    
+    def _handle_key_up(self, event=None):
+        if self._is_list_view_active():
+            return self.on_key_up(event)
+            self.on_key_up(event)
+    def _handle_key_down(self, event=None):
+        # Also activate on first keypress if list is visible
+        if self.winfo_ismapped():
+            return self.on_key_down(event)
+            self.on_key_down(event)
+    def _handle_key_enter(self, event=None):
+        if self._is_list_view_active():
+            return self.on_key_enter(event)
+            self.on_key_enter(event)
+    def _handle_key_delete(self, event=None):
+        if self._is_list_view_active():
+            return self.on_key_delete(event)
+            self.on_key_delete(event)
+    def _handle_key_select_all(self, event=None):
+        if self.winfo_ismapped():
+            return self.on_key_select_all(event)
+            self.on_key_select_all(event)
+        """Move focus to previous row"""
+        if not self.filtered_vocab_list:
+            return "break"
+        
+        # Calculate visible range
+        start_idx = (self.current_page - 1) * self.page_size
+        end_idx = min(start_idx + self.page_size, len(self.filtered_vocab_list))
+        page_count = end_idx - start_idx
+        
+        if self.focused_index <= 0:
+            # At top of page, go to previous page if possible
+            if self.current_page > 1:
+                self.go_prev_page()
+                self.focused_index = min(self.page_size - 1, len(self.filtered_vocab_list) - (self.current_page - 1) * self.page_size - 1)
+                self._update_focus_highlight()
+        else:
+            self.focused_index -= 1
+            self._update_focus_highlight()
+        
+        return "break"
+    
+    def on_key_down(self, event=None):
+        """Move focus to next row"""
+        if not self.filtered_vocab_list:
+            return "break"
+        
+        # Calculate visible range
+        start_idx = (self.current_page - 1) * self.page_size
+        end_idx = min(start_idx + self.page_size, len(self.filtered_vocab_list))
+        page_count = end_idx - start_idx
+        
+        if self.focused_index < 0:
+            # No focus yet, focus first item
+            self.focused_index = 0
+        elif self.focused_index >= page_count - 1:
+            # At bottom of page, go to next page if possible
+            if self.current_page < self.total_pages:
+                self.go_next_page()
+                self.focused_index = 0
+                self._update_focus_highlight()
+        else:
+            self.focused_index += 1
+        
+        self._update_focus_highlight()
+        return "break"
+    
+    def on_key_enter(self, event=None):
+        """Open detail window for focused item"""
+        if self.focused_index < 0 or not self.filtered_vocab_list:
+            return "break"
+        
+        start_idx = (self.current_page - 1) * self.page_size
+        actual_idx = start_idx + self.focused_index
+        
+        if 0 <= actual_idx < len(self.filtered_vocab_list):
+            item = self.filtered_vocab_list[actual_idx]
+            self.view_word_detail(item)
+        
+        return "break"
+    
+    def on_key_delete(self, event=None):
+        """Delete focused item"""
+        if self.focused_index < 0 or not self.filtered_vocab_list:
+            return "break"
+        
+        start_idx = (self.current_page - 1) * self.page_size
+        actual_idx = start_idx + self.focused_index
+        
+        if 0 <= actual_idx < len(self.filtered_vocab_list):
+            item = self.filtered_vocab_list[actual_idx]
+            self.delete_word(item['word'])
+        
+        return "break"
+    
+    def on_key_select_all(self, event=None):
+        """Select all words in the current filtered list"""
+        if not self.filtered_vocab_list:
+            return "break"
+        
+        # Toggle: if all are selected, deselect all; otherwise select all
+        all_words = {item['word'] for item in self.filtered_vocab_list}
+        if all_words.issubset(self.selected_words):
+            # All selected, deselect all
+            self.selected_words.clear()
+        else:
+            # Select all
+            self.selected_words = all_words.copy()
+        
+        # Update checkboxes
+        self._update_checkboxes()
+        return "break"
+    
+    def _update_focus_highlight(self):
+        """Update visual highlight for keyboard-focused row"""
+        start_idx = (self.current_page - 1) * self.page_size
+        end_idx = min(start_idx + self.page_size, len(self.filtered_vocab_list))
+        page_count = end_idx - start_idx
+        
+        for i in range(len(self.row_pool)):
+            if i >= page_count:
+                break
+            row = self.row_pool[i]
+            if i == self.focused_index:
+                # Highlight focused row
+                row['frame'].configure(
+                    border_color=("#1f538d", "#3B8ED0"),
+                    border_width=2,
+                    fg_color=("gray95", "#363636")
+                )
+            else:
+                # Normal style
+                row['frame'].configure(
+                    border_color=("gray90", "gray30"),
+                    border_width=1,
+                    fg_color=("white", "#2b2b2b")
+                )
+    
+    def _update_checkboxes(self):
+        """Update all visible checkbox states based on selected_words"""
+        start_idx = (self.current_page - 1) * self.page_size
+        end_idx = min(start_idx + self.page_size, len(self.filtered_vocab_list))
+        
+        for i, item in enumerate(self.filtered_vocab_list[start_idx:end_idx]):
+            if i < len(self.row_pool):
+                if item['word'] in self.selected_words:
+                    self.row_pool[i]['checkbox'].select()
+                else:
+                    self.row_pool[i]['checkbox'].deselect()
+
     def create_row_widget(self):
         # Card container
         card = ctk.CTkFrame(
@@ -202,12 +371,13 @@ class ListView(BaseView):
         card.bind("<Enter>", on_enter)
         card.bind("<Leave>", on_leave)
 
-        def bind_click_recursive(widget, handler):
+        def bind_click_recursive(widget, single_handler, double_handler):
             # Don't bind to buttons or checkbox
             if widget not in [play_btn, delete_btn, checkbox]:
-                widget.bind("<Button-1>", handler)
+                widget.bind("<Button-1>", single_handler)
+                widget.bind("<Double-Button-1>", double_handler)
                 for child in widget.winfo_children():
-                    bind_click_recursive(child, handler)
+                    bind_click_recursive(child, single_handler, double_handler)
 
         self._bind_click = bind_click_recursive
 
@@ -273,12 +443,24 @@ class ListView(BaseView):
             
         row['meaning_lbl'].configure(text=meaning)
 
-        # Setup main button command
-        def on_row_click(e, x=item):
+        # Setup click handlers: single click = focus, double click = open detail
+        def on_row_single_click(e, x=item):
+            # Find this item's index in current page
+            start_idx = (self.current_page - 1) * self.page_size
+            try:
+                page_items = self.filtered_vocab_list[start_idx:start_idx + self.page_size]
+                idx = page_items.index(x)
+                self._on_row_click_focus(idx)
+            except (ValueError, IndexError):
+                pass
+            return "break"
+        
+        def on_row_double_click(e, x=item):
             self.view_word_detail(x)
+            return "break"
 
         # Apply recursive binding for clicks
-        self._bind_click(row['content_btn'], on_row_click)
+        self._bind_click(row['content_btn'], on_row_single_click, on_row_double_click)
 
         # Bind right click (pass row for visual feedback)
         for widget in [row['content_btn'], row['word_lbl'], row['phonetic_lbl'], row['meaning_lbl']]:
@@ -576,6 +758,9 @@ class ListView(BaseView):
         for row in self.row_pool:
             row['frame'].pack_forget()
 
+        # Reset focus when page content changes
+        self.focused_index = -1
+
         if not self.filtered_vocab_list:
             for row in self.row_pool: row['frame'].pack_forget()
             if self.row_pool:
@@ -605,11 +790,19 @@ class ListView(BaseView):
             row['actions_frame'].grid(row=0, column=2, padx=(5, 15), sticky="e")
             self.update_row_widget(row, item, now_ts)
             row['frame'].pack(fill="x", pady=6, padx=15)
+            # Bind click to focus this view for keyboard navigation
+            row['frame'].bind("<Button-1>", lambda e, idx=i: self._on_row_click_focus(idx), add="+")
 
         try:
             self.list_scroll._parent_canvas.yview_moveto(0)
         except (AttributeError, Exception):
             pass
+
+    def _on_row_click_focus(self, row_index):
+        """Set focus to this view and update focused row index on click"""
+        self.focus_set()
+        self.focused_index = row_index
+        self._update_focus_highlight()
 
     def update_pagination_controls(self):
         self.lbl_page_info.configure(text=f"第 {self.current_page} / {self.total_pages} 页")

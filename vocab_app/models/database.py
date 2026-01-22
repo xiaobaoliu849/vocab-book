@@ -144,6 +144,16 @@ class DatabaseManager:
             )
         ''')
 
+        # Study Statistics table (Step 4: Review Timer & Stats)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS study_stats (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT UNIQUE NOT NULL,    -- YYYY-MM-DD
+                total_duration INTEGER DEFAULT 0, -- Seconds
+                review_count INTEGER DEFAULT 0
+            )
+        ''')
+
         # Create indexes for frequently queried columns to improve performance
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_word ON words(word)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_next_review_time ON words(next_review_time)')
@@ -431,6 +441,41 @@ class DatabaseManager:
             'learning': learning,
             'due_today': due_today
         }
+
+    def log_study_session(self, duration_seconds, review_count=0):
+        """Log a study session duration."""
+        if duration_seconds <= 0: return
+        
+        today = datetime.now().strftime('%Y-%m-%d')
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # Upsert using SQLite syntax (INSERT OR IGNORE then UPDATE, or newer ON CONFLICT)
+            # Standard way: Try update, if 0 rows, insert
+            cursor.execute('''
+                UPDATE study_stats 
+                SET total_duration = total_duration + ?, review_count = review_count + ?
+                WHERE date = ?
+            ''', (duration_seconds, review_count, today))
+            
+            if cursor.rowcount == 0:
+                cursor.execute('''
+                    INSERT INTO study_stats (date, total_duration, review_count)
+                    VALUES (?, ?, ?)
+                ''', (today, duration_seconds, review_count))
+            
+            conn.commit()
+        except Exception as e:
+            print(f"Log study session error: {e}")
+
+    def get_total_study_time(self):
+        """Get total study time in seconds across all history."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT SUM(total_duration) FROM study_stats")
+        res = cursor.fetchone()
+        return res[0] if res and res[0] else 0
 
     # --- Word Family Operations (派生词群组) ---
 

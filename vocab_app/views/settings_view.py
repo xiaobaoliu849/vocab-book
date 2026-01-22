@@ -190,6 +190,13 @@ class SettingsView(BaseView):
         self.lbl_due_today = ctk.CTkLabel(due_box, text="0 个", font=("Microsoft YaHei UI", 24, "bold"))
         self.lbl_due_today.pack(pady=(0, 10))
 
+        # Total Study Time (Added)
+        time_box = ctk.CTkFrame(card, fg_color=("#f3e5f5", "#4a148c"), corner_radius=10)
+        time_box.pack(fill="x", padx=20, pady=(0, 20))
+        ctk.CTkLabel(time_box, text="⏱️ 累计学习时长", font=("Microsoft YaHei UI", 12), text_color="gray").pack(pady=(10, 2))
+        self.lbl_total_time = ctk.CTkLabel(time_box, text="0 分钟", font=("Microsoft YaHei UI", 24, "bold"))
+        self.lbl_total_time.pack(pady=(0, 10))
+
     def create_heatmap_card(self, parent):
         card = ctk.CTkFrame(parent, fg_color=("white", "#2b2b2b"), corner_radius=15)
         card.pack(fill="x", padx=15, pady=8)
@@ -199,7 +206,7 @@ class SettingsView(BaseView):
         heatmap_container.pack(fill="x", padx=20, pady=(0, 20))
 
         self.heatmap_canvas = tk.Canvas(
-            heatmap_container, height=200,
+            heatmap_container, height=95,
             bg=self.get_canvas_bg().replace("gray95", "white"), # slight adjust
             highlightthickness=0, bd=0
         )
@@ -671,6 +678,18 @@ class SettingsView(BaseView):
             self.lbl_mastered.configure(text=f"{mastered} ({percentage}%)")
             self.lbl_due_today.configure(text=f"{due_today} 个")
 
+            # Update Total Study Time
+            total_seconds = self.controller.db.get_total_study_time()
+            if total_seconds < 60:
+                time_str = f"{total_seconds} 秒"
+            elif total_seconds < 3600:
+                time_str = f"{total_seconds // 60} 分钟"
+            else:
+                hours = total_seconds // 3600
+                mins = (total_seconds % 3600) // 60
+                time_str = f"{hours} 小时 {mins} 分钟"
+            self.lbl_total_time.configure(text=time_str)
+
             self.draw_heatmap()
 
         # Update Hotkey (if visible)
@@ -802,9 +821,9 @@ class SettingsView(BaseView):
 
         self.heatmap_canvas.delete("all")
         data = self.controller.db.get_review_heatmap_data()
-        box_size = 18
-        gap = 3
-        margin_left = 30
+        box_size = 8
+        gap = 1
+        margin_left = 20
         margin_top = 20
 
         mode = ctk.get_appearance_mode()

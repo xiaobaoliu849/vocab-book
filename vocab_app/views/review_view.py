@@ -29,6 +29,11 @@ class ReviewView(BaseView):
         self.review_correct_count = 0
         self.review_fuzzy_count = 0
         self.review_forgot_count = 0
+        
+        # Timer
+        self._timer_running = False
+        self._timer_seconds = 0
+        self._timer_id = None
 
         # --- Top Header: Mode Switcher ---
         self.header_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -57,6 +62,10 @@ class ReviewView(BaseView):
                                            text_color=("gray20", "gray80"), font=("Microsoft YaHei UI", 12),
                                            command=self.toggle_cram_mode)
         self.btn_toggle_cram.pack(side="right")
+        
+        # Timer Label (Added)
+        self.lbl_timer = ctk.CTkLabel(self.header_frame, text="⏱️ 00:00", font=("Consolas", 14), text_color="gray")
+        self.lbl_timer.pack(side="right", padx=15)
         
         # 结束复习按钮
         self.btn_end_review = ctk.CTkButton(
@@ -183,6 +192,11 @@ class ReviewView(BaseView):
         self.review_correct_count = 0
         self.review_fuzzy_count = 0
         self.review_forgot_count = 0
+
+        # Start Timer
+        self._timer_seconds = 0
+        self._timer_running = True
+        self.update_timer()
         
         # Unified entry point
         self.next_card()
@@ -227,6 +241,24 @@ class ReviewView(BaseView):
             self.btn_toggle_cram.configure(text="🚀 突击模式: 关", fg_color="gray")
 
         self.start_review()
+
+    def update_timer(self):
+        if not self._timer_running: return
+        
+        mins, secs = divmod(self._timer_seconds, 60)
+        self.lbl_timer.configure(text=f"⏱️ {mins:02d}:{secs:02d}")
+        
+        self._timer_seconds += 1
+        self._timer_id = self.after(1000, self.update_timer)
+
+    def stop_timer(self):
+        self._timer_running = False
+        if self._timer_id:
+            try:
+                self.after_cancel(self._timer_id)
+                self._timer_id = None
+            except:
+                pass
 
     def next_card(self):
         self.txt_rm.configure(state="normal")
@@ -483,6 +515,7 @@ class ReviewView(BaseView):
                 pass
 
     def show_finished_screen(self):
+        self.stop_timer() # Stop the timer
         # 隐藏操作区域
         for child in [self.reveal_overlay, self.exercise_overlay, self.act_frame]:
             child.pack_forget()
@@ -502,6 +535,9 @@ class ReviewView(BaseView):
             minutes = total_seconds // 60
             seconds = total_seconds % 60
             time_str = f"{minutes}分{seconds}秒" if minutes > 0 else f"{seconds}秒"
+            
+            # Log to DB
+            self.controller.db.log_study_session(total_seconds, self.review_completed)
         else:
             time_str = "未知"
         
