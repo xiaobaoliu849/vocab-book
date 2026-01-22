@@ -18,6 +18,7 @@ class ListView(BaseView):
         self.filtered_vocab_list = []
         self.search_query = ""
         self.status_filter = "全部"
+        self.tag_filter = ""  # Tag filter state
         self.list_search_timer = None
         self.selected_words = set() # Store selected words (by word string)
         self._last_detail_open_time = 0 # Debounce for DetailWindow
@@ -60,6 +61,17 @@ class ListView(BaseView):
         )
         self.filter_dropdown.set("全部")
         self.filter_dropdown.pack(side="left", padx=(0, 15))
+
+        # --- Tag Filter ---
+        self.tag_options = ["全部标签"]
+        self.tag_dropdown = ctk.CTkOptionMenu(
+            toolbar_frame, values=self.tag_options, width=120, height=36, corner_radius=18,
+            font=("Microsoft YaHei UI", 12), command=self.on_tag_filter_change,
+            fg_color=("#9C27B0", "#6A1B9A"), button_color=("#9C27B0", "#6A1B9A"),
+            button_hover_color=("#7B1FA2", "#4A148C")
+        )
+        self.tag_dropdown.set("全部标签")
+        self.tag_dropdown.pack(side="left", padx=(0, 15))
 
         # --- Batch Actions ---
         batch_frame = ctk.CTkFrame(toolbar_frame, fg_color="transparent")
@@ -143,24 +155,25 @@ class ListView(BaseView):
     def _handle_key_up(self, event=None):
         if self._is_list_view_active():
             return self.on_key_up(event)
-            self.on_key_up(event)
+
     def _handle_key_down(self, event=None):
         # Also activate on first keypress if list is visible
         if self.winfo_ismapped():
             return self.on_key_down(event)
-            self.on_key_down(event)
+
     def _handle_key_enter(self, event=None):
         if self._is_list_view_active():
             return self.on_key_enter(event)
-            self.on_key_enter(event)
+
     def _handle_key_delete(self, event=None):
         if self._is_list_view_active():
             return self.on_key_delete(event)
-            self.on_key_delete(event)
+
     def _handle_key_select_all(self, event=None):
         if self.winfo_ismapped():
             return self.on_key_select_all(event)
-            self.on_key_select_all(event)
+
+    def on_key_up(self, event=None):
         """Move focus to previous row"""
         if not self.filtered_vocab_list:
             return "break"
@@ -277,7 +290,48 @@ class ListView(BaseView):
                     border_width=1,
                     fg_color=("white", "#2b2b2b")
                 )
+        
+        # Scroll to make focused row visible
+        if 0 <= self.focused_index < page_count:
+            self._scroll_to_row(self.focused_index)
     
+    def _scroll_to_row(self, row_index):
+        """Scroll the list to make the specified row visible."""
+        try:
+            if row_index < 0 or row_index >= len(self.row_pool):
+                return
+            
+            row_frame = self.row_pool[row_index]['frame']
+            canvas = self.list_scroll._parent_canvas
+            
+            # Get row position relative to scrollable frame
+            row_frame.update_idletasks()
+            canvas.update_idletasks()
+            
+            # Get the row's y position in the scrollable frame
+            row_y = row_frame.winfo_y()
+            row_height = row_frame.winfo_height()
+            
+            # Get visible area
+            canvas_height = canvas.winfo_height()
+            scroll_top = canvas.yview()[0] * self.list_scroll.winfo_height()
+            scroll_bottom = scroll_top + canvas_height
+            
+            # Check if row is fully visible
+            row_top = row_y
+            row_bottom = row_y + row_height
+            
+            if row_top < scroll_top:
+                # Row is above visible area, scroll up
+                fraction = row_top / self.list_scroll.winfo_height()
+                canvas.yview_moveto(max(0, fraction - 0.02))
+            elif row_bottom > scroll_bottom:
+                # Row is below visible area, scroll down
+                fraction = (row_bottom - canvas_height) / self.list_scroll.winfo_height()
+                canvas.yview_moveto(min(1, fraction + 0.02))
+        except Exception:
+            pass
+
     def _update_checkboxes(self):
         """Update all visible checkbox states based on selected_words"""
         start_idx = (self.current_page - 1) * self.page_size
@@ -352,6 +406,9 @@ class ListView(BaseView):
         )
         delete_btn.pack(side="left", padx=3)
 
+        # Hover-to-play timer storage
+        hover_timer = {'id': None}
+
         def set_actions_visibility(active):
             if active:
                 play_btn.configure(fg_color=("#4CAF50", "#2E7D32"), text_color="white")
@@ -386,11 +443,15 @@ class ListView(BaseView):
             'content_btn': content_btn, 'word_lbl': word_label,
             'phonetic_lbl': phonetic_label, 'meaning_lbl': meaning_label,
             'play_btn': play_btn, 'delete_btn': delete_btn,
-            'actions_frame': actions_frame
+            'actions_frame': actions_frame,
+            'hover_timer': hover_timer
         }
 
     def update_row_widget(self, row, item, now_ts):
         word = item['word']
+
+        # Store current item reference for event handlers
+        row['current_item'] = item
 
         row['checkbox'].configure(command=lambda w=word: self.toggle_selection(w))
         if word in self.selected_words:
@@ -443,33 +504,79 @@ class ListView(BaseView):
             
         row['meaning_lbl'].configure(text=meaning)
 
-        # Setup click handlers: single click = focus, double click = open detail
-        def on_row_single_click(e, x=item):
-            # Find this item's index in current page
-            start_idx = (self.current_page - 1) * self.page_size
-            try:
-                page_items = self.filtered_vocab_list[start_idx:start_idx + self.page_size]
-                idx = page_items.index(x)
-                self._on_row_click_focus(idx)
-            except (ValueError, IndexError):
-                pass
-            return "break"
+        # Setup click handlers using row reference for dynamic item lookup
+        def make_single_click_handler(r):
+            def handler(e):
+                current_item = r.get('current_item')
+                if current_item:
+                    start_idx = (self.current_page - 1) * self.page_size
+                    try:
+                        page_items = self.filtered_vocab_list[start_idx:start_idx + self.page_size]
+                        idx = page_items.index(current_item)
+                        self._on_row_click_focus(idx)
+                    except (ValueError, IndexError):
+                        pass
+                return "break"
+            return handler
         
-        def on_row_double_click(e, x=item):
-            self.view_word_detail(x)
-            return "break"
+        def make_double_click_handler(r):
+            def handler(e):
+                current_item = r.get('current_item')
+                if current_item:
+                    self.view_word_detail(current_item)
+                return "break"
+            return handler
 
-        # Apply recursive binding for clicks
-        self._bind_click(row['content_btn'], on_row_single_click, on_row_double_click)
+        def make_context_menu_handler(r):
+            def handler(e):
+                current_item = r.get('current_item')
+                if current_item:
+                    self.show_context_menu(e, current_item, r)
+            return handler
 
-        # Bind right click (pass row for visual feedback)
+        # Apply bindings with dynamic lookup
+        self._bind_click(row['content_btn'], make_single_click_handler(row), make_double_click_handler(row))
+
+        # Bind right click
+        context_handler = make_context_menu_handler(row)
         for widget in [row['content_btn'], row['word_lbl'], row['phonetic_lbl'], row['meaning_lbl']]:
-            widget.bind("<Button-3>", lambda e, x=item, r=row: self.show_context_menu(e, x, r))
-            widget.bind("<Button-2>", lambda e, x=item, r=row: self.show_context_menu(e, x, r))
+            widget.bind("<Button-3>", context_handler)
+            widget.bind("<Button-2>", context_handler)
 
         play_btn = row['play_btn']
         row['play_btn'].configure(command=lambda w=item['word'], b=play_btn: self.play_audio(w, b))
         row['delete_btn'].configure(command=lambda w=item['word']: self.delete_word(w))
+
+        # Hover-to-play: auto play after 500ms hover on play button
+        hover_timer = row['hover_timer']
+        
+        def on_play_btn_enter(e):
+            # Cancel any existing timer
+            if hover_timer['id']:
+                self.after_cancel(hover_timer['id'])
+            # Start new timer
+            current_item = row.get('current_item')
+            if current_item:
+                hover_timer['id'] = self.after(500, lambda: self._hover_play(row))
+        
+        def on_play_btn_leave(e):
+            # Cancel timer on mouse leave
+            if hover_timer['id']:
+                self.after_cancel(hover_timer['id'])
+                hover_timer['id'] = None
+        
+        play_btn.bind("<Enter>", on_play_btn_enter)
+        play_btn.bind("<Leave>", on_play_btn_leave)
+
+    def _hover_play(self, row):
+        """Play audio for the word in the given row (triggered by hover)."""
+        try:
+            row['hover_timer']['id'] = None
+            current_item = row.get('current_item')
+            if current_item:
+                self.play_audio(current_item['word'], row['play_btn'])
+        except Exception:
+            pass
 
     def toggle_selection(self, word):
         if word in self.selected_words:
@@ -606,7 +713,21 @@ class ListView(BaseView):
         self.page_size_dropdown.pack(side="left")
 
     def on_show(self):
+        self.refresh_tag_options()
         self.refresh_list()
+
+    def refresh_tag_options(self):
+        """Refresh the tag filter dropdown with available tags from database."""
+        try:
+            tags = self.controller.db.get_all_tags()
+            self.tag_options = ["全部标签"] + tags
+            self.tag_dropdown.configure(values=self.tag_options)
+            # Keep current selection if still valid
+            if self.tag_filter and self.tag_filter not in tags:
+                self.tag_filter = ""
+                self.tag_dropdown.set("全部标签")
+        except Exception as e:
+            print(f"Error refreshing tag options: {e}")
 
     def refresh_list(self):
         self.controller.reload_vocab_list()
@@ -708,6 +829,13 @@ class ListView(BaseView):
         self.status_filter = value
         self._reset_and_render()
 
+    def on_tag_filter_change(self, value):
+        if value == "全部标签":
+            self.tag_filter = ""
+        else:
+            self.tag_filter = value
+        self._reset_and_render()
+
     def sort_vocab_list(self, items, now_ts):
         def sort_key(item):
             if item.get('mastered'): return (3, 0)
@@ -742,6 +870,7 @@ class ListView(BaseView):
         # 使用数据库搜索（完全在数据库层过滤，无需二次过滤）
         results, total_count = self.controller.db.search_words(
             keyword=query,
+            tag_filter=self.tag_filter,
             mastered_filter=mastered_filter,
             status_filter=status_filter,
             limit=10000,  # 获取足够多的结果用于排序和分页

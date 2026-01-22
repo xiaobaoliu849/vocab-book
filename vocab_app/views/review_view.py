@@ -306,8 +306,8 @@ class ReviewView(BaseView):
 
         # Audio Play (Auto) - 使用类方法而非内部函数
         self.btn_rp.configure(command=self._safe_play_audio)
-        if self.review_method != "spelling": # Don't play in spelling mode until revealed/checked? Standard learning practice.
-            self._safe_play_audio()
+        # Auto play audio for all modes including spelling
+        self._safe_play_audio()
 
     def _safe_play_audio(self):
         """安全播放当前单词发音（类方法，避免在循环中重复定义）"""

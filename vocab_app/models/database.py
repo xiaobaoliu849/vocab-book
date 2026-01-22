@@ -314,6 +314,21 @@ class DatabaseManager:
             result.append(d)
         return result
 
+    def get_all_tags(self):
+        """Get all unique tags from the database."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT DISTINCT tags FROM words WHERE tags IS NOT NULL AND tags != ""')
+        rows = cursor.fetchall()
+        tags_set = set()
+        for row in rows:
+            if row[0]:
+                for tag in row[0].split(','):
+                    tag = tag.strip()
+                    if tag:
+                        tags_set.add(tag)
+        return sorted(list(tags_set))
+
     def update_context(self, word, en, cn):
         conn = self.get_connection()
         cursor = conn.cursor()
