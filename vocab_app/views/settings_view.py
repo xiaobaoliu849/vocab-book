@@ -821,17 +821,29 @@ class SettingsView(BaseView):
 
         self.heatmap_canvas.delete("all")
         data = self.controller.db.get_review_heatmap_data()
-        box_size = 8
-        gap = 1
-        margin_left = 20
-        margin_top = 20
+
+        # Get scaling factor from CustomTkinter
+        try:
+            scaling = self._get_widget_scaling()
+        except AttributeError:
+            scaling = 1.0
+
+        # Apply scaling to fixed sizes
+        box_size = 8 * scaling
+        gap = 1 * scaling
+        margin_left = 40 * scaling
+        margin_top = 25 * scaling
+        font_size = int(7 * scaling)
 
         mode = ctk.get_appearance_mode()
         is_dark = mode == "Dark"
 
         # Ensure canvas bg is correct
         bg = "#2b2b2b" if is_dark else "white"
-        self.heatmap_canvas.configure(bg=bg)
+        
+        # Calculate required height dynamically
+        required_height = margin_top + 7 * (box_size + gap) + (10 * scaling)
+        self.heatmap_canvas.configure(bg=bg, height=required_height)
 
         if is_dark:
             colors = ["#161b22", "#0e4429", "#006d32", "#26a641", "#39d353"]
@@ -868,8 +880,8 @@ class SettingsView(BaseView):
             self.heatmap_canvas.create_rectangle(x1, y1, x1+box_size, y1+box_size, fill=color, outline="")
 
             if day_of_week == 0 and current.day <= 7:
-                 self.heatmap_canvas.create_text(x1, margin_top - 10, text=months[current.month-1],
-                                                fill=text_color, font=("Arial", 9), anchor="w")
+                 self.heatmap_canvas.create_text(x1, margin_top - (10 * scaling), text=months[current.month-1],
+                                                fill=text_color, font=("Arial", font_size), anchor="w")
 
             current += timedelta(days=1)
             if day_of_week == 6:
@@ -879,7 +891,7 @@ class SettingsView(BaseView):
         days_idx = [1, 3, 5]
         for i, label in zip(days_idx, days_label):
             y = margin_top + i * (box_size + gap) + box_size/2
-            self.heatmap_canvas.create_text(margin_left - 5, y, text=label, fill=text_color, font=("Arial", 9), anchor="e")
+            self.heatmap_canvas.create_text(margin_left - (5 * scaling), y, text=label, fill=text_color, font=("Arial", font_size), anchor="e")
 
     def toggle_donate_qr(self):
         if not self.donate_qr_available:

@@ -57,31 +57,35 @@ class ReviewView(BaseView):
                                                command=lambda: self.set_review_method("sentence"))
         self.btn_method_sentence.pack(side="left", padx=2, pady=2)
 
-        self.btn_toggle_cram = ctk.CTkButton(self.header_frame, text="🚀 突击模式: 关", width=140, height=36, corner_radius=18,
+        self.right_header_frame = ctk.CTkFrame(self.header_frame, fg_color="transparent")
+        self.right_header_frame.pack(side="right")
+
+        # 结束复习按钮 (Leftmost in the right group)
+        self.btn_end_review = ctk.CTkButton(
+            self.right_header_frame, text="⏹ 结束", width=100, height=36, corner_radius=18,
+            fg_color="transparent", border_width=1, border_color="#F44336",
+            text_color="#F44336", hover_color=("#FFEBEE", "#3a1a1a"),
+            font=("Microsoft YaHei UI", 13, "bold"),
+            command=self.end_review_early
+        )
+        self.btn_end_review.pack(side="left", padx=(0, 10), pady=2)
+
+        # Timer Label (Middle)
+        self.lbl_timer = ctk.CTkLabel(self.right_header_frame, text="⏱️ 00:00", font=("Consolas", 14), text_color="gray")
+        self.lbl_timer.pack(side="left", padx=15, pady=2)
+
+        # Toggle Cram Button (Rightmost)
+        self.btn_toggle_cram = ctk.CTkButton(self.right_header_frame, text="🚀 突击模式: 关", width=140, height=36, corner_radius=18,
                                            fg_color="transparent", border_width=1, border_color="gray", 
                                            text_color=("gray20", "gray80"), font=("Microsoft YaHei UI", 12),
                                            command=self.toggle_cram_mode)
-        self.btn_toggle_cram.pack(side="right")
-        
-        # Timer Label (Added)
-        self.lbl_timer = ctk.CTkLabel(self.header_frame, text="⏱️ 00:00", font=("Consolas", 14), text_color="gray")
-        self.lbl_timer.pack(side="right", padx=15)
-        
-        # 结束复习按钮
-        self.btn_end_review = ctk.CTkButton(
-            self.header_frame, text="⏹ 结束", width=80, height=36, corner_radius=18,
-            fg_color="transparent", border_width=1, border_color="#F44336",
-            text_color="#F44336", hover_color=("#FFEBEE", "#3a1a1a"),
-            font=("Microsoft YaHei UI", 12),
-            command=self.end_review_early
-        )
-        self.btn_end_review.pack(side="right", padx=(0, 10))
+        self.btn_toggle_cram.pack(side="left", pady=2)
 
         # Row 2: Progress (Moved inside card or kept top)
         self.progress_container = ctk.CTkFrame(self, fg_color="transparent")
         self.progress_container.pack(fill="x", side="top", padx=80, pady=(10, 5)) 
         
-        self.review_progress_bar = ctk.CTkProgressBar(self.progress_container, height=4, fg_color=("gray85", "gray30"), progress_color="#3B8ED0")
+        self.review_progress_bar = ctk.CTkProgressBar(self.progress_container, height=8, corner_radius=4, fg_color=("gray85", "gray30"), progress_color="#3B8ED0")
         self.review_progress_bar.pack(fill="x", side="top", pady=(0, 2))
         self.review_progress_bar.set(0)
 
@@ -89,14 +93,15 @@ class ReviewView(BaseView):
         self.lbl_review_progress.pack(side="right")
 
         # Row 3: Main Display Card (Responsive)
-        self.card = ctk.CTkFrame(self, fg_color=("white", "#2b2b2b"), corner_radius=28, border_width=1, border_color=("gray90", "gray30"))
+        self.card = ctk.CTkFrame(self, fg_color=("white", "#2b2b2b"), corner_radius=28, border_width=1, border_color=("gray92", "gray30"))
+        # Added slight shadow effect via border or nested frame approach if we could, but simple border change is good for now.
         self.card.pack(side="top", padx=60, pady=(10, 10), fill="both", expand=True) 
         # self.card.pack_propagate(False) # Removed to allow internal elements to push/pull
 
         self.lbl_rw = ctk.CTkTextbox(
             self.card, 
             height=80,
-            font=("Microsoft YaHei UI", 36, "bold"),
+            font=("Microsoft YaHei UI", 42, "bold"),
             fg_color="transparent",
             text_color=("#1a1a1a", "#ffffff"),
             border_width=0,
@@ -117,10 +122,10 @@ class ReviewView(BaseView):
         self.lbl_rw.pack(pady=(60, 10), fill="x", padx=40)
         self.bind_context_menu(self.lbl_rw)
 
-        self.btn_rp = ctk.CTkButton(self.card, text="🔊", width=46, height=46, corner_radius=23, fg_color="#4CAF50", hover_color="#45a049", font=("Arial", 18), command=lambda: None)
+        self.btn_rp = ctk.CTkButton(self.card, text="🔊", width=56, height=56, corner_radius=28, fg_color="#4CAF50", hover_color="#45a049", font=("Arial", 22), command=lambda: None)
         self.btn_rp.pack(pady=5)
 
-        self.txt_rm = ctk.CTkTextbox(self.card, font=("Microsoft YaHei UI", 15), fg_color="transparent", border_width=0, activate_scrollbars=True)
+        self.txt_rm = ctk.CTkTextbox(self.card, font=("Microsoft YaHei UI", 16), fg_color="transparent", border_width=0, activate_scrollbars=True)
         self.txt_rm.pack(pady=(5, 10), fill="both", expand=True, padx=40)
         self.bind_context_menu(self.txt_rm)
 
@@ -130,7 +135,7 @@ class ReviewView(BaseView):
 
         # Sub-container: Reveal Button (Standard)
         self.reveal_overlay = ctk.CTkFrame(self.desk_frame, fg_color="transparent")
-        self.btn_rev = ctk.CTkButton(self.reveal_overlay, text="🔍 显示释义 (Space)", font=("Microsoft YaHei UI", 16, "bold"), width=300, height=55, corner_radius=28, command=self.reveal_meaning)
+        self.btn_rev = ctk.CTkButton(self.reveal_overlay, text="🔍 显示释义 (Space)", font=("Microsoft YaHei UI", 18, "bold"), width=320, height=60, corner_radius=30, command=self.reveal_meaning)
         self.btn_rev.pack(expand=True)
 
         # Sub-container: Active Exercise (Spelling/Sentence)
@@ -265,6 +270,10 @@ class ReviewView(BaseView):
         self.txt_rm.delete("0.0", "end")
         self.txt_rm.configure(state="disabled")
         
+        # Ensure desk_frame is visible
+        if not self.desk_frame.winfo_manager():
+            self.desk_frame.pack(side="top", fill="x", padx=40, pady=(0, 5))
+            
         # Reset Desk State
         for child in [self.reveal_overlay, self.exercise_overlay, self.act_frame]:
             child.pack_forget()
@@ -519,6 +528,9 @@ class ReviewView(BaseView):
         # 隐藏操作区域
         for child in [self.reveal_overlay, self.exercise_overlay, self.act_frame]:
             child.pack_forget()
+        
+        # Hide the desk frame entirely to allow card to expand fully
+        self.desk_frame.pack_forget()
         
         # 计算统计数据
         elapsed_time = datetime.now() - self.review_start_time if self.review_start_time else None
